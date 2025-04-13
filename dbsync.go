@@ -39,10 +39,9 @@ func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []Data
 
 // syncOverwrite performs complete overwrite synchronization
 func syncOverwrite(ctx context.Context, tx *sql.Tx, config Config, fileRecords []DataRecord) error {
-	// 1. Delete existing data (TRUNCATE or DELETE)
-	// Note: TRUNCATE may not be rollback-able in some DBs
-	// _, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", config.Sync.TableName))
-	_, err := tx.ExecContext(ctx, fmt.Sprintf("TRUNCATE TABLE %s", config.Sync.TableName)) // TRUNCATE may be faster in some DBs
+	// 1. Delete existing data (DELETE)
+	// Note: Using DELETE instead of TRUNCATE to ensure transaction safety
+	_, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", config.Sync.TableName))
 	if err != nil {
 		return fmt.Errorf("error deleting data from table '%s': %w", config.Sync.TableName, err)
 	}
