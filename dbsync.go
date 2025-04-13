@@ -14,7 +14,7 @@ func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []Data
 	if err != nil {
 		return fmt.Errorf("transaction start error: %w", err)
 	}
-	defer tx.Rollback() // Rollback on error or panic
+	defer tx.Rollback()
 
 	switch config.Sync.SyncMode {
 	case "overwrite":
@@ -26,10 +26,9 @@ func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []Data
 	}
 
 	if err != nil {
-		return fmt.Errorf("sync process error: %w", err) // Will be rolled back
+		return fmt.Errorf("sync process error: %w", err)
 	}
 
-	// Commit on success
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("transaction commit error: %w", err)
 	}
@@ -58,7 +57,7 @@ func syncOverwrite(ctx context.Context, tx *sql.Tx, config Config, fileRecords [
 	valueArgs := make([]any, 0, len(fileRecords)*len(config.Sync.Columns))
 	placeholders := make([]string, len(config.Sync.Columns))
 	for i := range placeholders {
-		placeholders[i] = "?" // Some DBs might use $1, $2...
+		placeholders[i] = "?"
 	}
 	placeholderStr := fmt.Sprintf("(%s)", strings.Join(placeholders, ","))
 
