@@ -100,16 +100,6 @@ The provided `docker-compose.yml` sets up a MySQL database and initializes it wi
 - `init-sql/`: SQL files for database initialization
 - `testdata.csv`: Sample data file for testing
 
-## Contributing
-
-Contributions are welcome! Here are some ways you can contribute:
-
-1. Report bugs or suggest features by opening issues
-2. Submit pull requests with improvements
-3. Improve documentation
-4. Add support for additional file formats
-5. Enhance database compatibility
-
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
