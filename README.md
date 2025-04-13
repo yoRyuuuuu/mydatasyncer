@@ -90,7 +90,7 @@ go build
 ./mydatasyncer
 ```
 
-The provided `docker-compose.yml` sets up a MySQL database and initializes it with sample tables.
+The provided `compose.yml` sets up a MySQL database and initializes it with sample tables.
 
 ## Project Structure
 
