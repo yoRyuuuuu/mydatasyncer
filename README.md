@@ -1,4 +1,4 @@
-The mydatasyncer is a Go-based utility for synchronizing data from CSV files to a relational database. It provides flexible synchronization options including full overwrite and differential update modes.
+The mydatasyncer is a utility for synchronizing data from various file formats to a relational database. It provides flexible synchronization options including full overwrite and differential update modes.
 
 ## Features
 
@@ -8,7 +8,7 @@ The mydatasyncer is a Go-based utility for synchronizing data from CSV files to 
 - **Bulk operations**: Efficiently handles large datasets using bulk insert/update/delete operations
 - **Transaction support**: All operations are wrapped in a database transaction to ensure data integrity
 - **Simple configuration**: Easy to define target tables, columns, and primary keys
-- **CSV format support**: Currently supports CSV as an input format (extensible design for future format additions)
+- **Multiple format support**: Supports CSV with plans to add JSON, YAML, and other data formats
 
 ## Installation
 
@@ -18,12 +18,6 @@ The mydatasyncer is a Go-based utility for synchronizing data from CSV files to 
 - MySQL or compatible database (configurable for other database systems)
 
 ### Installing
-
-```bash
-go get github.com/yoRyuuuuu/mydatasyncer
-```
-
-Or clone the repository and build:
 
 ```bash
 git clone https://github.com/yoRyuuuuu/mydatasyncer.git
@@ -83,14 +77,14 @@ A Docker Compose setup is included for easy development and testing:
 
 ```bash
 # Start the MySQL database
-docker-compose up -d
+docker compose up -d
 
 # Build and run the application
 go build
 ./mydatasyncer
 ```
 
-The provided `docker-compose.yml` sets up a MySQL database and initializes it with sample tables.
+The provided `compose.yml` sets up a MySQL database and initializes it with sample tables.
 
 ## Project Structure
 
@@ -99,16 +93,6 @@ The provided `docker-compose.yml` sets up a MySQL database and initializes it wi
 - `config.go`: Configuration definitions and loading
 - `init-sql/`: SQL files for database initialization
 - `testdata.csv`: Sample data file for testing
-
-## Contributing
-
-Contributions are welcome! Here are some ways you can contribute:
-
-1. Report bugs or suggest features by opening issues
-2. Submit pull requests with improvements
-3. Improve documentation
-4. Add support for additional file formats
-5. Enhance database compatibility
 
 ## License
 
