@@ -15,14 +15,12 @@ func main() {
 	defer cancel()
 
 	// 1. Load configuration
-	config := LoadConfig() // Function defined in config.go
-
-	// Validate configuration
+	config := LoadConfig()
 	if err := ValidateConfig(config); err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
 
-	// 2. Database connection (using database/sql or GORM)
+	// 2. Database connection
 	db, err := sql.Open("mysql", config.DB.DSN)
 	if err != nil {
 		log.Fatalf("Database connection error: %v", err)
@@ -52,15 +50,12 @@ func main() {
 
 // loadDataFromFile loads data from file using the integrated loader functionality
 func loadDataFromFile(filePath string, columns []string) ([]DataRecord, error) {
-	// Get appropriate loader automatically
 	dataLoader := GetLoader(filePath)
 
-	// Configure CSV loader options if applicable
 	if csvLoader, ok := dataLoader.(*CSVLoader); ok {
-		csvLoader.WithHeader(true) // File has header row
+		csvLoader.WithHeader(true)
 		// csvLoader.WithDelimiter('\t')  // For tab-delimited files
 	}
 
-	// Execute file loading
 	return dataLoader.Load(columns)
 }
