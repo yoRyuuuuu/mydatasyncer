@@ -48,15 +48,30 @@ func NewDefaultConfig() Config {
 // LoadConfig loads configuration from config.yml file
 // Falls back to default configuration if the file doesn't exist or contains errors
 func LoadConfig() Config {
-	configPath := "config.yml"
+	// Check multiple locations for config file
+	configLocations := []string{
+		"config.yml",
+		"config.yaml",
+	}
 
-	// Try to read the config file
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		fmt.Printf("Warning: Could not read config file %s: %v\n", configPath, err)
-		fmt.Println("Using default configuration")
+	var configPath string
+	var data []byte
+	var err error
+	for _, loc := range configLocations {
+		data, err = os.ReadFile(loc)
+		if err == nil {
+			configPath = loc
+			break
+		}
+	}
+
+	// If no config file found, use default configuration
+	if configPath == "" {
+		fmt.Println("No config file found in standard locations. Using default configuration.")
 		return NewDefaultConfig()
 	}
+
+	fmt.Printf("Using config file: %s\n", configPath)
 
 	var cfg Config
 	err = yaml.Unmarshal(data, &cfg)

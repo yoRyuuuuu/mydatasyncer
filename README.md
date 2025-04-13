@@ -17,7 +17,19 @@ The mydatasyncer is a utility for synchronizing data from various file formats t
 - Go 1.16 or later
 - MySQL or compatible database (configurable for other database systems)
 
-### Installing
+### Installing with go install
+
+The simplest way to install mydatasyncer is to use `go install`:
+
+```bash
+go install github.com/yoRyuuuuu/mydatasyncer@latest
+```
+
+This will install the latest version of mydatasyncer in your Go bin directory, which should be in your PATH.
+
+### Building from Source
+
+Alternatively, you can build from source:
 
 ```bash
 git clone https://github.com/yoRyuuuuu/mydatasyncer.git
@@ -32,43 +44,31 @@ go build
 Run the synchronization with:
 
 ```bash
-./mydatasyncer
+mydatasyncer
 ```
 
-By default, it will use the built-in configuration. You can customize the behavior through environment variables or configuration files (planned feature).
+By default, it will use the built-in configuration. You can customize the behavior through a configuration file.
 
 ### Configuration
 
-Edit the configuration in `config.go` or provide a configuration file (future enhancement). Key configuration options:
-
-- Database connection string
-- Input file path
-- Target table name
-- Column mappings
-- Synchronization mode (overwrite/diff)
-- Whether to delete records not in source file
-
 Example configuration:
 
-```go
-Config{
-    DB: struct{ DSN string }{DSN: "user:password@tcp(127.0.0.1:3306)/testdb?parseTime=true"},
-    Sync: struct {
-        FilePath        string
-        TableName       string
-        Columns         []string
-        PrimaryKey      string
-        SyncMode        string
-        DeleteNotInFile bool
-    }{
-        FilePath:        "./testdata.csv",
-        TableName:       "products",
-        Columns:         []string{"id", "name", "price"},
-        PrimaryKey:      "id",
-        SyncMode:        "diff",
-        DeleteNotInFile: true,
-    },
-}
+```yaml
+# Database connection settings
+db:
+  dsn: "user:password@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+
+# Data synchronization settings
+sync:
+  filePath: "./testdata.csv"
+  tableName: "products"
+  columns:
+    - id
+    - name
+    - price
+  primaryKey: "id"
+  syncMode: "diff" # "overwrite" or "diff"
+  deleteNotInFile: true
 ```
 
 ## Using with Docker
