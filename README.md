@@ -1,4 +1,4 @@
-The mydatasyncer is a Go-based utility for synchronizing data from CSV files to a relational database. It provides flexible synchronization options including full overwrite and differential update modes.
+The mydatasyncer is a utility for synchronizing data from various file formats to a relational database. It provides flexible synchronization options including full overwrite and differential update modes.
 
 ## Features
 
@@ -8,7 +8,7 @@ The mydatasyncer is a Go-based utility for synchronizing data from CSV files to 
 - **Bulk operations**: Efficiently handles large datasets using bulk insert/update/delete operations
 - **Transaction support**: All operations are wrapped in a database transaction to ensure data integrity
 - **Simple configuration**: Easy to define target tables, columns, and primary keys
-- **CSV format support**: Currently supports CSV as an input format (extensible design for future format additions)
+- **Multiple format support**: Supports CSV with plans to add Excel, JSON, XML, and other data formats
 
 ## Installation
 
