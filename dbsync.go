@@ -56,7 +56,7 @@ func syncOverwrite(ctx context.Context, tx *sql.Tx, config Config, fileRecords [
 
 	// Build INSERT statement (using Bulk Insert for efficiency)
 	valueStrings := make([]string, 0, len(fileRecords))
-	valueArgs := make([]interface{}, 0, len(fileRecords)*len(config.Sync.Columns))
+	valueArgs := make([]any, 0, len(fileRecords)*len(config.Sync.Columns))
 	placeholders := make([]string, len(config.Sync.Columns))
 	for i := range placeholders {
 		placeholders[i] = "?" // Some DBs might use $1, $2...
@@ -154,8 +154,8 @@ func getCurrentDBData(ctx context.Context, tx *sql.Tx, config Config) (map[strin
 	}
 
 	dbData := make(map[string]DataRecord) // Map with primary key as key
-	vals := make([]interface{}, len(cols))
-	scanArgs := make([]interface{}, len(cols))
+	vals := make([]any, len(cols))
+	scanArgs := make([]any, len(cols))
 	for i := range vals {
 		scanArgs[i] = &vals[i]
 	}
@@ -253,7 +253,7 @@ func bulkInsert(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 		return nil
 	}
 	valueStrings := make([]string, 0, len(records))
-	valueArgs := make([]interface{}, 0, len(records)*len(config.Sync.Columns))
+	valueArgs := make([]any, 0, len(records)*len(config.Sync.Columns))
 	placeholders := make([]string, len(config.Sync.Columns))
 	for i := range placeholders {
 		placeholders[i] = "?"
@@ -303,7 +303,7 @@ func bulkUpdate(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 	defer stmt.Close()
 
 	for _, record := range records {
-		args := make([]interface{}, 0, len(config.Sync.Columns))
+		args := make([]any, 0, len(config.Sync.Columns))
 		for _, col := range config.Sync.Columns {
 			if col != config.Sync.PrimaryKey {
 				args = append(args, record[col])
@@ -324,7 +324,7 @@ func bulkDelete(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 	if len(records) == 0 {
 		return nil
 	}
-	pkValues := make([]interface{}, 0, len(records))
+	pkValues := make([]any, 0, len(records))
 	placeholders := make([]string, 0, len(records))
 	for _, record := range records {
 		pkValues = append(pkValues, record[config.Sync.PrimaryKey])
