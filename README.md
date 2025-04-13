@@ -20,12 +20,6 @@ The mydatasyncer is a utility for synchronizing data from various file formats t
 ### Installing
 
 ```bash
-go get github.com/yoRyuuuuu/mydatasyncer
-```
-
-Or clone the repository and build:
-
-```bash
 git clone https://github.com/yoRyuuuuu/mydatasyncer.git
 cd mydatasyncer
 go build
