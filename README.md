@@ -83,7 +83,7 @@ A Docker Compose setup is included for easy development and testing:
 
 ```bash
 # Start the MySQL database
-docker-compose up -d
+docker compose up -d
 
 # Build and run the application
 go build
