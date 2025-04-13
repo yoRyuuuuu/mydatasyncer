@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/csv"
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql" // MySQL driver import (change according to your DB)
 	// "github.com/spf13/viper" // For loading configuration files
@@ -98,6 +100,10 @@ func GetLoader(filePath string) Loader {
 }
 
 func main() {
+	// Create a context with timeout for the entire process
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
 	// 1. Load configuration
 	config := LoadConfig() // Function defined in config.go
 
@@ -107,7 +113,7 @@ func main() {
 		log.Fatalf("Database connection error: %v", err)
 	}
 	defer db.Close()
-	err = db.Ping()
+	err = db.PingContext(ctx)
 	if err != nil {
 		log.Fatalf("Database connectivity error: %v", err)
 	}
@@ -121,7 +127,7 @@ func main() {
 	log.Printf("Loaded %d records from file.", len(records))
 
 	// 4. Synchronization process - now uses the function from dbsync.go
-	err = syncData(db, config, records)
+	err = syncData(ctx, db, config, records)
 	if err != nil {
 		log.Fatalf("Data synchronization error: %v", err)
 	}
