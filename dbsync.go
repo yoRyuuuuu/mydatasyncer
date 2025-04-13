@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -8,8 +9,8 @@ import (
 )
 
 // syncData synchronizes data between file and database
-func syncData(db *sql.DB, config Config, fileRecords []DataRecord) error {
-	tx, err := db.Begin()
+func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []DataRecord) error {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("transaction start error: %w", err)
 	}
@@ -17,9 +18,9 @@ func syncData(db *sql.DB, config Config, fileRecords []DataRecord) error {
 
 	switch config.Sync.SyncMode {
 	case "overwrite":
-		err = syncOverwrite(tx, config, fileRecords)
+		err = syncOverwrite(ctx, tx, config, fileRecords)
 	case "diff":
-		err = syncDiff(tx, config, fileRecords)
+		err = syncDiff(ctx, tx, config, fileRecords)
 	default:
 		return fmt.Errorf("unknown sync mode: %s", config.Sync.SyncMode)
 	}
@@ -37,11 +38,11 @@ func syncData(db *sql.DB, config Config, fileRecords []DataRecord) error {
 }
 
 // syncOverwrite performs complete overwrite synchronization
-func syncOverwrite(tx *sql.Tx, config Config, fileRecords []DataRecord) error {
+func syncOverwrite(ctx context.Context, tx *sql.Tx, config Config, fileRecords []DataRecord) error {
 	// 1. Delete existing data (TRUNCATE or DELETE)
 	// Note: TRUNCATE may not be rollback-able in some DBs
-	// _, err := tx.Exec(fmt.Sprintf("DELETE FROM %s", config.Sync.TableName))
-	_, err := tx.Exec(fmt.Sprintf("TRUNCATE TABLE %s", config.Sync.TableName)) // TRUNCATE may be faster in some DBs
+	// _, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", config.Sync.TableName))
+	_, err := tx.ExecContext(ctx, fmt.Sprintf("TRUNCATE TABLE %s", config.Sync.TableName)) // TRUNCATE may be faster in some DBs
 	if err != nil {
 		return fmt.Errorf("error deleting data from table '%s': %w", config.Sync.TableName, err)
 	}
@@ -74,7 +75,7 @@ func syncOverwrite(tx *sql.Tx, config Config, fileRecords []DataRecord) error {
 		strings.Join(config.Sync.Columns, ","),
 		strings.Join(valueStrings, ","))
 
-	_, err = tx.Exec(stmt, valueArgs...)
+	_, err = tx.ExecContext(ctx, stmt, valueArgs...)
 	if err != nil {
 		return fmt.Errorf("data insertion error: %w", err)
 	}
@@ -84,10 +85,10 @@ func syncOverwrite(tx *sql.Tx, config Config, fileRecords []DataRecord) error {
 }
 
 // syncDiff performs differential synchronization
-func syncDiff(tx *sql.Tx, config Config, fileRecords []DataRecord) error {
+func syncDiff(ctx context.Context, tx *sql.Tx, config Config, fileRecords []DataRecord) error {
 	// Implementation is more complex
 	// 1. Get current data from DB (primary key and target columns)
-	dbRecords, err := getCurrentDBData(tx, config)
+	dbRecords, err := getCurrentDBData(ctx, tx, config)
 	if err != nil {
 		return fmt.Errorf("DB data retrieval error: %w", err)
 	}
@@ -104,7 +105,7 @@ func syncDiff(tx *sql.Tx, config Config, fileRecords []DataRecord) error {
 	// 3. INSERT processing
 	if len(toInsert) > 0 {
 		// Same implementation as in syncOverwrite's INSERT part
-		err = bulkInsert(tx, config, toInsert)
+		err = bulkInsert(ctx, tx, config, toInsert)
 		if err != nil {
 			return fmt.Errorf("INSERT error: %w", err)
 		}
@@ -114,7 +115,7 @@ func syncDiff(tx *sql.Tx, config Config, fileRecords []DataRecord) error {
 	// 4. UPDATE processing
 	if len(toUpdate) > 0 {
 		// Execute individual UPDATEs or try Bulk Update
-		err = bulkUpdate(tx, config, toUpdate)
+		err = bulkUpdate(ctx, tx, config, toUpdate)
 		if err != nil {
 			return fmt.Errorf("UPDATE error: %w", err)
 		}
@@ -124,7 +125,7 @@ func syncDiff(tx *sql.Tx, config Config, fileRecords []DataRecord) error {
 	// 5. DELETE processing
 	if len(toDelete) > 0 && config.Sync.DeleteNotInFile {
 		// Execute DELETE statement (using IN clause)
-		err = bulkDelete(tx, config, toDelete)
+		err = bulkDelete(ctx, tx, config, toDelete)
 		if err != nil {
 			return fmt.Errorf("DELETE error: %w", err)
 		}
@@ -135,13 +136,13 @@ func syncDiff(tx *sql.Tx, config Config, fileRecords []DataRecord) error {
 }
 
 // getCurrentDBData retrieves current data from database (for differential sync)
-func getCurrentDBData(tx *sql.Tx, config Config) (map[string]DataRecord, error) {
+func getCurrentDBData(ctx context.Context, tx *sql.Tx, config Config) (map[string]DataRecord, error) {
 	// SELECT <primaryKey>, <columns...> FROM <tableName>
 	query := fmt.Sprintf("SELECT %s FROM %s",
 		strings.Join(append([]string{config.Sync.PrimaryKey}, config.Sync.Columns...), ","), // Include primary key
 		config.Sync.TableName)
 
-	rows, err := tx.Query(query)
+	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query execution error (%s): %w", query, err)
 	}
@@ -247,7 +248,7 @@ func diffData(
 }
 
 // bulkInsert performs bulk insertion of records
-func bulkInsert(tx *sql.Tx, config Config, records []DataRecord) error {
+func bulkInsert(ctx context.Context, tx *sql.Tx, config Config, records []DataRecord) error {
 	if len(records) == 0 {
 		return nil
 	}
@@ -269,12 +270,12 @@ func bulkInsert(tx *sql.Tx, config Config, records []DataRecord) error {
 		config.Sync.TableName,
 		strings.Join(config.Sync.Columns, ","),
 		strings.Join(valueStrings, ","))
-	_, err := tx.Exec(stmt, valueArgs...)
+	_, err := tx.ExecContext(ctx, stmt, valueArgs...)
 	return err
 }
 
 // bulkUpdate performs updates for multiple records
-func bulkUpdate(tx *sql.Tx, config Config, records []DataRecord) error {
+func bulkUpdate(ctx context.Context, tx *sql.Tx, config Config, records []DataRecord) error {
 	if len(records) == 0 {
 		return nil
 	}
@@ -295,7 +296,7 @@ func bulkUpdate(tx *sql.Tx, config Config, records []DataRecord) error {
 		strings.Join(updateCols, ", "),
 		config.Sync.PrimaryKey)
 
-	stmt, err := tx.Prepare(stmtSQL)
+	stmt, err := tx.PrepareContext(ctx, stmtSQL)
 	if err != nil {
 		return fmt.Errorf("UPDATE preparation error: %w", err)
 	}
@@ -309,7 +310,7 @@ func bulkUpdate(tx *sql.Tx, config Config, records []DataRecord) error {
 			}
 		}
 		args = append(args, record[config.Sync.PrimaryKey]) // Primary key for WHERE clause
-		_, err = stmt.Exec(args...)
+		_, err = stmt.ExecContext(ctx, args...)
 		if err != nil {
 			// Good to log which record caused the error
 			return fmt.Errorf("UPDATE execution error (PK: %s): %w", record[config.Sync.PrimaryKey], err)
@@ -319,7 +320,7 @@ func bulkUpdate(tx *sql.Tx, config Config, records []DataRecord) error {
 }
 
 // bulkDelete performs deletion of multiple records
-func bulkDelete(tx *sql.Tx, config Config, records []DataRecord) error {
+func bulkDelete(ctx context.Context, tx *sql.Tx, config Config, records []DataRecord) error {
 	if len(records) == 0 {
 		return nil
 	}
@@ -335,6 +336,6 @@ func bulkDelete(tx *sql.Tx, config Config, records []DataRecord) error {
 		config.Sync.PrimaryKey,
 		strings.Join(placeholders, ","))
 
-	_, err := tx.Exec(stmt, pkValues...)
+	_, err := tx.ExecContext(ctx, stmt, pkValues...)
 	return err
 }
