@@ -10,9 +10,6 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql" // MySQL driver import (change according to your DB)
-	// "github.com/spf13/viper" // For loading configuration files
-	// "gorm.io/driver/mysql" // GORM driver
-	// "gorm.io/gorm"         // GORM
 )
 
 // DataRecord represents one record of data loaded from file
@@ -106,6 +103,11 @@ func main() {
 
 	// 1. Load configuration
 	config := LoadConfig() // Function defined in config.go
+
+	// Validate configuration
+	if err := ValidateConfig(config); err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
 
 	// 2. Database connection (using database/sql or GORM)
 	db, err := sql.Open("mysql", config.DB.DSN)
