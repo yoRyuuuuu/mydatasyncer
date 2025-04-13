@@ -8,7 +8,7 @@ The mydatasyncer is a utility for synchronizing data from various file formats t
 - **Bulk operations**: Efficiently handles large datasets using bulk insert/update/delete operations
 - **Transaction support**: All operations are wrapped in a database transaction to ensure data integrity
 - **Simple configuration**: Easy to define target tables, columns, and primary keys
-- **Multiple format support**: Supports CSV with plans to add Excel, JSON, XML, and other data formats
+- **Multiple format support**: Supports CSV with plans to add JSON, YAML, and other data formats
 
 ## Installation
 
