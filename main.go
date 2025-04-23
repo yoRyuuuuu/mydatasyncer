@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"flag"
 	"log"
 	"time"
 
@@ -10,12 +11,16 @@ import (
 )
 
 func main() {
+	// Define command-line flags
+	configPath := flag.String("config", "", "Path to configuration file (default: mydatasyncer.yml)")
+	flag.Parse()
+
 	// Create a context with timeout for the entire process
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	// 1. Load configuration
-	config := LoadConfig()
+	config := LoadConfig(*configPath)
 	if err := ValidateConfig(config); err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
