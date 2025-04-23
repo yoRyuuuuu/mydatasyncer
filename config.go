@@ -45,17 +45,21 @@ func NewDefaultConfig() Config {
 	}
 }
 
-// LoadConfig loads configuration from mydatasyncer.yml file
+// LoadConfig loads configuration from file specified by configPath
 // Falls back to default configuration if the file doesn't exist or contains errors
-func LoadConfig() Config {
+func LoadConfig(configPath string) Config {
+	// If no config path is provided, use the default
+	if configPath == "" {
+		configPath = "mydatasyncer.yml"
+	}
+
 	// Check for the config file
-	configPath := "mydatasyncer.yml" // Updated config file name
 	data, err := os.ReadFile(configPath)
 
 	// If config file not found or error reading, use default configuration
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Println("Config file 'mydatasyncer.yml' not found. Using default configuration.")
+			fmt.Printf("Config file '%s' not found. Using default configuration.\n", configPath)
 		} else {
 			fmt.Printf("Warning: Error reading config file %s: %v\n", configPath, err)
 			fmt.Println("Using default configuration")
