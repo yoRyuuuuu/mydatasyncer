@@ -253,17 +253,13 @@ func bulkInsert(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 		return nil
 	}
 
-	// Prepare columns list including timestamp columns
-	allColumns := append([]string{}, config.Sync.Columns...)
-	for _, tsCol := range config.Sync.TimestampColumns {
-		if !slices.Contains(allColumns, tsCol) {
-			allColumns = append(allColumns, tsCol)
-		}
-	}
+	// Calculate total number of columns (source columns + timestamp columns)
+	totalCols := len(config.Sync.Columns) + len(config.Sync.TimestampColumns)
 
+	// Prepare placeholders
 	valueStrings := make([]string, 0, len(records))
-	valueArgs := make([]any, 0, len(records)*len(allColumns))
-	placeholders := make([]string, len(allColumns))
+	valueArgs := make([]any, 0, len(records)*totalCols)
+	placeholders := make([]string, totalCols)
 	for i := range placeholders {
 		placeholders[i] = "?"
 	}
@@ -278,17 +274,19 @@ func bulkInsert(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 			valueArgs = append(valueArgs, record[col])
 		}
 
-		// Add current timestamp for timestamp columns
-		for _, tsCol := range config.Sync.TimestampColumns {
-			if slices.Contains(allColumns, tsCol) {
-				valueArgs = append(valueArgs, now)
-			}
+		// Add current timestamp for all timestamp columns
+		for range config.Sync.TimestampColumns {
+			valueArgs = append(valueArgs, now)
 		}
 	}
 
+	// Prepare column names by concatenating source and timestamp columns
+	columns := slices.Clone(config.Sync.Columns)
+	columns = append(columns, config.Sync.TimestampColumns...)
+
 	stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s",
 		config.Sync.TableName,
-		strings.Join(allColumns, ","),
+		strings.Join(columns, ","),
 		strings.Join(valueStrings, ","))
 	_, err := tx.ExecContext(ctx, stmt, valueArgs...)
 	return err
