@@ -36,3 +36,20 @@ sync:
   # If set to true, data in the database with a primary key that doesn't exist in the file will be deleted.
   # If set to false, such data will not be deleted.
   deleteNotInFile: true
+
+  # Columns to automatically set current timestamp
+  # When specified, these columns will be set to the current time on insert/update
+  # Example usage:
+  #   - For new records: both created_at and updated_at will be set
+  #   - For updated records: only updated_at will be set
+  timestampColumns:
+    - "created_at"
+    - "updated_at"
+
+  # Columns that should not be updated in diff mode
+  # These columns will keep their original values when records are updated
+  # Example usage:
+  #   - Protect sensitive fields from being overwritten
+  #   - Maintain historical data like 'created_at'
+  immutableColumns:
+    - "created_at" # Protect creation timestamp from updates

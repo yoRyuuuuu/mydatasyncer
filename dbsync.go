@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
+	"time"
 )
 
 // syncData synchronizes data between file and database
@@ -250,23 +252,43 @@ func bulkInsert(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 	if len(records) == 0 {
 		return nil
 	}
+
+	// Prepare columns list including timestamp columns
+	allColumns := append([]string{}, config.Sync.Columns...)
+	for _, tsCol := range config.Sync.TimestampColumns {
+		if !slices.Contains(allColumns, tsCol) {
+			allColumns = append(allColumns, tsCol)
+		}
+	}
+
 	valueStrings := make([]string, 0, len(records))
-	valueArgs := make([]any, 0, len(records)*len(config.Sync.Columns))
-	placeholders := make([]string, len(config.Sync.Columns))
+	valueArgs := make([]any, 0, len(records)*len(allColumns))
+	placeholders := make([]string, len(allColumns))
 	for i := range placeholders {
 		placeholders[i] = "?"
 	}
 	placeholderStr := fmt.Sprintf("(%s)", strings.Join(placeholders, ","))
 
+	now := time.Now()
 	for _, record := range records {
 		valueStrings = append(valueStrings, placeholderStr)
+
+		// Add values from source data
 		for _, col := range config.Sync.Columns {
 			valueArgs = append(valueArgs, record[col])
 		}
+
+		// Add current timestamp for timestamp columns
+		for _, tsCol := range config.Sync.TimestampColumns {
+			if slices.Contains(allColumns, tsCol) {
+				valueArgs = append(valueArgs, now)
+			}
+		}
 	}
+
 	stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s",
 		config.Sync.TableName,
-		strings.Join(config.Sync.Columns, ","),
+		strings.Join(allColumns, ","),
 		strings.Join(valueStrings, ","))
 	_, err := tx.ExecContext(ctx, stmt, valueArgs...)
 	return err
@@ -278,10 +300,21 @@ func bulkUpdate(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 		return nil
 	}
 	// Simple example: Update one by one (inefficient)
-	updateCols := make([]string, 0, len(config.Sync.Columns))
+	// Prepare update columns
+	updateCols := make([]string, 0, len(config.Sync.Columns)+len(config.Sync.TimestampColumns))
+
+	// Add columns from source data
 	for _, col := range config.Sync.Columns {
-		if col != config.Sync.PrimaryKey { // Don't include primary key in SET clause
+		// Don't include primary key or immutable columns in SET clause
+		if col != config.Sync.PrimaryKey && !slices.Contains(config.Sync.ImmutableColumns, col) {
 			updateCols = append(updateCols, fmt.Sprintf("%s = ?", col))
+		}
+	}
+
+	// Add timestamp columns (except immutable ones)
+	for _, tsCol := range config.Sync.TimestampColumns {
+		if tsCol != config.Sync.PrimaryKey && !slices.Contains(config.Sync.Columns, tsCol) && !slices.Contains(config.Sync.ImmutableColumns, tsCol) {
+			updateCols = append(updateCols, fmt.Sprintf("%s = ?", tsCol))
 		}
 	}
 	if len(updateCols) == 0 {
@@ -301,10 +334,20 @@ func bulkUpdate(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 	defer stmt.Close()
 
 	for _, record := range records {
-		args := make([]any, 0, len(config.Sync.Columns))
+		now := time.Now()
+		args := make([]any, 0, len(config.Sync.Columns)+len(config.Sync.TimestampColumns))
+
+		// Add values from source data
 		for _, col := range config.Sync.Columns {
-			if col != config.Sync.PrimaryKey {
+			if col != config.Sync.PrimaryKey && !slices.Contains(config.Sync.ImmutableColumns, col) {
 				args = append(args, record[col])
+			}
+		}
+
+		// Add current timestamp for timestamp columns (except immutable ones)
+		for _, tsCol := range config.Sync.TimestampColumns {
+			if tsCol != config.Sync.PrimaryKey && !slices.Contains(config.Sync.Columns, tsCol) && !slices.Contains(config.Sync.ImmutableColumns, tsCol) {
+				args = append(args, now)
 			}
 		}
 		args = append(args, record[config.Sync.PrimaryKey]) // Primary key for WHERE clause

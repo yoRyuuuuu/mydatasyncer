@@ -14,12 +14,14 @@ type DBConfig struct {
 
 // SyncConfig represents data synchronization settings
 type SyncConfig struct {
-	FilePath        string   `yaml:"filePath"`        // Input file path
-	TableName       string   `yaml:"tableName"`       // Target table name
-	Columns         []string `yaml:"columns"`         // DB column names corresponding to file columns (order is important)
-	PrimaryKey      string   `yaml:"primaryKey"`      // Primary key column name (required for differential update)
-	SyncMode        string   `yaml:"syncMode"`        // "overwrite" or "diff" (differential)
-	DeleteNotInFile bool     `yaml:"deleteNotInFile"` // Whether to delete records not in file when using diff mode
+	FilePath         string   `yaml:"filePath"`         // Input file path
+	TableName        string   `yaml:"tableName"`        // Target table name
+	Columns          []string `yaml:"columns"`          // DB column names corresponding to file columns (order is important)
+	TimestampColumns []string `yaml:"timestampColumns"` // Column names to set current timestamp on insert/update
+	ImmutableColumns []string `yaml:"immutableColumns"` // Column names that should not be updated in diff mode
+	PrimaryKey       string   `yaml:"primaryKey"`       // Primary key column name (required for differential update)
+	SyncMode         string   `yaml:"syncMode"`         // "overwrite" or "diff" (differential)
+	DeleteNotInFile  bool     `yaml:"deleteNotInFile"`  // Whether to delete records not in file when using diff mode
 }
 
 // Config represents configuration information
@@ -35,12 +37,14 @@ func NewDefaultConfig() Config {
 			DSN: "user:password@tcp(127.0.0.1:3306)/testdb?parseTime=true",
 		},
 		Sync: SyncConfig{
-			FilePath:        "./testdata.csv",
-			TableName:       "products",
-			Columns:         []string{"id", "name", "price"}, // Match CSV column order
-			PrimaryKey:      "id",
-			SyncMode:        "diff", // "overwrite" or "diff"
-			DeleteNotInFile: true,
+			FilePath:         "./testdata.csv",
+			TableName:        "products",
+			Columns:          []string{"id", "name", "price"}, // Match CSV column order
+			PrimaryKey:       "id",
+			SyncMode:         "diff", // "overwrite" or "diff"
+			DeleteNotInFile:  true,
+			TimestampColumns: []string{}, // Default to empty slice
+			ImmutableColumns: []string{}, // Default to empty slice
 		},
 	}
 }
