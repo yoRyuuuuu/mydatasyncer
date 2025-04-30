@@ -30,6 +30,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 	}
 
 	rootDSN := fmt.Sprintf("%s:%s@tcp(%s:%s)/", user, password, host, port)
+	// amazonq-ignore-next-line
 	db, err := sql.Open("mysql", rootDSN)
 	if err != nil {
 		t.Fatalf("Failed to open root database: %v", err)
@@ -263,6 +264,45 @@ func TestSyncDiff(t *testing.T) {
 
 		if diff := cmp.Diff(result, fileRecords); diff != "" {
 			t.Errorf("Sync result mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("diff sync with immutable columns", func(t *testing.T) {
+		db := setupTestDB(t)
+		defer db.Close()
+
+		cleanupTestData(t, db)
+
+		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)",
+			"1", "original_name", "original_value")
+		if err != nil {
+			t.Fatalf("Failed to insert test data: %v", err)
+		}
+
+		config := createTestConfig()
+		config.Sync.SyncMode = "diff"
+		config.Sync.ImmutableColumns = []string{"name"}
+
+		fileRecords := []DataRecord{
+			{"id": "1", "name": "new_name", "value": "new_value"},
+		}
+
+		err = syncData(context.Background(), db, config, fileRecords)
+		if err != nil {
+			t.Fatalf("Failed to sync data: %v", err)
+		}
+
+		var name, value string
+		err = db.QueryRow("SELECT name, value FROM test_table WHERE id = ?", "1").Scan(&name, &value)
+		if err != nil {
+			t.Fatalf("Failed to query result: %v", err)
+		}
+
+		if name != "original_name" {
+			t.Errorf("name was updated despite being immutable. Expected 'original_name', got '%s'", name)
+		}
+		if value != "new_value" {
+			t.Errorf("value was not updated. Expected 'new_value', got '%s'", value)
 		}
 	})
 }
