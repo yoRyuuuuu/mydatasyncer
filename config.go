@@ -22,6 +22,7 @@ type SyncConfig struct {
 	PrimaryKey       string   `yaml:"primaryKey"`       // Primary key column name (required for differential update)
 	SyncMode         string   `yaml:"syncMode"`         // "overwrite" or "diff" (differential)
 	DeleteNotInFile  bool     `yaml:"deleteNotInFile"`  // Whether to delete records not in file when using diff mode
+	DryRun          bool     `yaml:"dryRun"`           // Whether to perform a dry run without making actual changes
 }
 
 // Config represents configuration information
@@ -45,6 +46,7 @@ func NewDefaultConfig() Config {
 			DeleteNotInFile:  true,
 			TimestampColumns: []string{}, // Default to empty slice
 			ImmutableColumns: []string{}, // Default to empty slice
+			DryRun:          false,      // Default to false for actual execution
 		},
 	}
 }

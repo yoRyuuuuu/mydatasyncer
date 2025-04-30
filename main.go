@@ -13,6 +13,7 @@ import (
 func main() {
 	// Define command-line flags
 	configPath := flag.String("config", "", "Path to configuration file (default: mydatasyncer.yml)")
+	dryRun := flag.Bool("dry-run", false, "Perform a dry run without making actual changes")
 	flag.Parse()
 
 	// Create a context with timeout for the entire process
@@ -21,6 +22,7 @@ func main() {
 
 	// 1. Load configuration
 	config := LoadConfig(*configPath)
+	config.Sync.DryRun = *dryRun // Set dry run flag from command line
 	if err := ValidateConfig(config); err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
