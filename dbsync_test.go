@@ -12,6 +12,8 @@ import (
 )
 
 func setupTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+
 	host := os.Getenv("MYSQL_HOST")
 	if host == "" {
 		host = "localhost"
@@ -75,6 +77,8 @@ func setupTestDB(t *testing.T) *sql.DB {
 }
 
 func cleanupTestData(t *testing.T, db *sql.DB) {
+	t.Helper()
+
 	_, err := db.Exec("TRUNCATE TABLE test_table")
 	if err != nil {
 		t.Fatalf("Failed to clean test table: %v", err)
