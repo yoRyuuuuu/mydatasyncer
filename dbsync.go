@@ -12,9 +12,9 @@ import (
 
 // SyncOperation represents a single database synchronization operation
 type SyncOperation struct {
-	OperationType string      // Operation type: "INSERT", "UPDATE", or "DELETE"
+	OperationType string       // Operation type: "INSERT", "UPDATE", or "DELETE"
 	Records       []DataRecord // Records affected by this operation
-	SQL          string      // SQL statement to be executed
+	SQL           string       // SQL statement to be executed
 }
 
 // SyncPreview represents a comprehensive preview of all synchronization operations
@@ -22,7 +22,7 @@ type SyncOperation struct {
 // to show the user what changes would be made without actually making them.
 type SyncPreview struct {
 	Operations   []SyncOperation // List of all operations that would be performed
-	TotalChanges int            // Total number of records that would be affected
+	TotalChanges int             // Total number of records that would be affected
 }
 
 // syncData synchronizes data between file and database
@@ -84,7 +84,7 @@ func previewSync(ctx context.Context, db *sql.DB, config Config, fileRecords []D
 		// Overwrite mode preview
 		deleteOp := SyncOperation{
 			OperationType: "DELETE",
-			SQL:          fmt.Sprintf("DELETE FROM %s", config.Sync.TableName),
+			SQL:           fmt.Sprintf("DELETE FROM %s", config.Sync.TableName),
 		}
 		preview.Operations = append(preview.Operations, deleteOp)
 
@@ -101,8 +101,8 @@ func previewSync(ctx context.Context, db *sql.DB, config Config, fileRecords []D
 
 			insertOp := SyncOperation{
 				OperationType: "INSERT",
-				Records:      fileRecords,
-				SQL:          insertSQL,
+				Records:       fileRecords,
+				SQL:           insertSQL,
 			}
 			preview.Operations = append(preview.Operations, insertOp)
 		}
@@ -135,8 +135,8 @@ func previewSync(ctx context.Context, db *sql.DB, config Config, fileRecords []D
 
 			insertOp := SyncOperation{
 				OperationType: "INSERT",
-				Records:      toInsert,
-				SQL:          insertSQL,
+				Records:       toInsert,
+				SQL:           insertSQL,
 			}
 			preview.Operations = append(preview.Operations, insertOp)
 		}
@@ -155,8 +155,8 @@ func previewSync(ctx context.Context, db *sql.DB, config Config, fileRecords []D
 
 			updateOp := SyncOperation{
 				OperationType: "UPDATE",
-				Records:      toUpdate,
-				SQL:          updateSQL,
+				Records:       toUpdate,
+				SQL:           updateSQL,
 			}
 			preview.Operations = append(preview.Operations, updateOp)
 		}
@@ -168,8 +168,8 @@ func previewSync(ctx context.Context, db *sql.DB, config Config, fileRecords []D
 
 			deleteOp := SyncOperation{
 				OperationType: "DELETE",
-				Records:      toDelete,
-				SQL:          deleteSQL,
+				Records:       toDelete,
+				SQL:           deleteSQL,
 			}
 			preview.Operations = append(preview.Operations, deleteOp)
 		}
