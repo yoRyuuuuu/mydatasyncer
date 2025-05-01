@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -10,6 +11,181 @@ import (
 	"time"
 )
 
+// UpdateOperation represents a single update operation with before and after states
+type UpdateOperation struct {
+	Before DataRecord
+	After  DataRecord
+}
+
+// ExecutionPlan represents the planned operations for data synchronization
+type ExecutionPlan struct {
+	SyncMode         string
+	TableName        string
+	FileRecordCount  int
+	DbRecordCount    int
+	InsertOperations []DataRecord
+	UpdateOperations []UpdateOperation
+	DeleteOperations []DataRecord
+	AffectedColumns  []string
+	TimestampColumns []string
+	ImmutableColumns []string // Added for dry-run display
+}
+
+// String returns a human-readable representation of the execution plan
+func (p *ExecutionPlan) String() string {
+	var buf bytes.Buffer
+	now := time.Now()
+
+	buf.WriteString("[DRY-RUN Mode] Execution Plan\n")
+	buf.WriteString("----------------------------------------------------\n")
+	buf.WriteString(fmt.Sprintf("Execution Summary:\n"))
+	buf.WriteString(fmt.Sprintf("- Sync Mode: %s\n", p.SyncMode))
+	buf.WriteString(fmt.Sprintf("- Target Table: %s\n", p.TableName))
+	buf.WriteString(fmt.Sprintf("- Records in File: %d\n", p.FileRecordCount))
+	buf.WriteString(fmt.Sprintf("- Records in Database: %d\n", p.DbRecordCount))
+	buf.WriteString("\nPlanned Operations:\n")
+
+	if len(p.DeleteOperations) > 0 {
+		buf.WriteString(fmt.Sprintf("\n1. DELETE Operations (%d records)\n", len(p.DeleteOperations)))
+		buf.WriteString("----------------------------------------------------\n")
+		for i, record := range p.DeleteOperations {
+			buf.WriteString(fmt.Sprintf("Record %d:\n", i+1))
+			for col, val := range record {
+				buf.WriteString(fmt.Sprintf("   %s: %v\n", col, val))
+			}
+			buf.WriteString("\n")
+		}
+	}
+
+	if len(p.InsertOperations) > 0 {
+		buf.WriteString(fmt.Sprintf("\n2. INSERT Operations (%d records)\n", len(p.InsertOperations)))
+		buf.WriteString("----------------------------------------------------\n")
+		buf.WriteString(fmt.Sprintf("Affected columns: %v\n\n", p.AffectedColumns))
+		for i, record := range p.InsertOperations {
+			buf.WriteString(fmt.Sprintf("Record %d:\n", i+1))
+			for _, col := range p.AffectedColumns {
+				buf.WriteString(fmt.Sprintf("   %s: %v\n", col, record[col]))
+			}
+			// Show timestamp values that will be set
+			for _, tsCol := range p.TimestampColumns {
+				buf.WriteString(fmt.Sprintf("   %s: %v (will be set)\n", tsCol, now.Format(time.RFC3339)))
+			}
+			buf.WriteString("\n")
+		}
+	}
+
+	if len(p.UpdateOperations) > 0 {
+		buf.WriteString(fmt.Sprintf("\n3. UPDATE Operations (%d records)\n", len(p.UpdateOperations)))
+		buf.WriteString("----------------------------------------------------\n")
+
+		// Filter out immutable columns from affected columns for UPDATE
+		var updateableColumns []string
+		for _, col := range p.AffectedColumns {
+			isImmutable := false
+			for _, immutableCol := range p.ImmutableColumns {
+				if col == immutableCol {
+					isImmutable = true
+					break
+				}
+			}
+			if !isImmutable {
+				updateableColumns = append(updateableColumns, col)
+			}
+		}
+
+		buf.WriteString(fmt.Sprintf("Affected columns: %v\n", updateableColumns))
+		if len(p.ImmutableColumns) > 0 {
+			buf.WriteString(fmt.Sprintf("Immutable columns (will not be updated): %v\n", p.ImmutableColumns))
+		}
+		buf.WriteString("\n")
+
+		for i, update := range p.UpdateOperations {
+			buf.WriteString(fmt.Sprintf("Record %d:\n", i+1))
+			// Display values for updateable columns
+			for _, col := range updateableColumns {
+				oldVal := update.Before[col]
+				newVal := update.After[col]
+				if oldVal != newVal {
+					buf.WriteString(fmt.Sprintf("   %s: %v -> %v\n", col, oldVal, newVal))
+				} else {
+					buf.WriteString(fmt.Sprintf("   %s: %v (unchanged)\n", col, oldVal))
+				}
+			}
+			// Display immutable columns with a note
+			for _, col := range p.ImmutableColumns {
+				if val, exists := update.After[col]; exists {
+					buf.WriteString(fmt.Sprintf("   %s: %v (immutable)\n", col, val))
+				}
+			}
+			// Show timestamp values that will be set
+			for _, tsCol := range p.TimestampColumns {
+				// Check if the timestamp column is not immutable
+				isImmutable := false
+				for _, immutableCol := range p.ImmutableColumns {
+					if tsCol == immutableCol {
+						isImmutable = true
+						break
+					}
+				}
+				if !isImmutable {
+					buf.WriteString(fmt.Sprintf("   %s: %v (will be set)\n", tsCol, now.Format(time.RFC3339)))
+				}
+			}
+			buf.WriteString("\n")
+		}
+	}
+
+	return buf.String()
+}
+
+// generateExecutionPlan creates an execution plan for the sync operation
+func generateExecutionPlan(ctx context.Context, tx *sql.Tx, config Config, fileRecords []DataRecord) (*ExecutionPlan, error) {
+	plan := &ExecutionPlan{
+		SyncMode:         config.Sync.SyncMode,
+		TableName:        config.Sync.TableName,
+		FileRecordCount:  len(fileRecords),
+		AffectedColumns:  config.Sync.Columns,
+		TimestampColumns: config.Sync.TimestampColumns,
+		ImmutableColumns: config.Sync.ImmutableColumns,
+	}
+
+	switch config.Sync.SyncMode {
+	case "overwrite":
+		// For overwrite mode, all records will be deleted and reinserted
+		dbRecords, err := getCurrentDBData(ctx, tx, config)
+		if err != nil {
+			return nil, fmt.Errorf("error getting current DB data: %w", err)
+		}
+		plan.DbRecordCount = len(dbRecords)
+		plan.DeleteOperations = make([]DataRecord, 0, len(dbRecords))
+		for _, record := range dbRecords {
+			plan.DeleteOperations = append(plan.DeleteOperations, record)
+		}
+		plan.InsertOperations = fileRecords
+
+	case "diff":
+		// For diff mode, calculate the actual differences
+		dbRecords, err := getCurrentDBData(ctx, tx, config)
+		if err != nil {
+			return nil, fmt.Errorf("error getting current DB data: %w", err)
+		}
+		plan.DbRecordCount = len(dbRecords)
+
+		// Use existing diffData function to calculate differences
+		toInsert, toUpdate, toDelete := diffData(config, fileRecords, dbRecords)
+		plan.InsertOperations = toInsert
+		plan.UpdateOperations = toUpdate
+		if config.Sync.DeleteNotInFile {
+			plan.DeleteOperations = toDelete
+		}
+
+	default:
+		return nil, fmt.Errorf("unknown sync mode: %s", config.Sync.SyncMode)
+	}
+
+	return plan, nil
+}
+
 // syncData synchronizes data between file and database
 func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []DataRecord) error {
 	tx, err := db.BeginTx(ctx, nil)
@@ -17,6 +193,16 @@ func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []Data
 		return fmt.Errorf("transaction start error: %w", err)
 	}
 	defer tx.Rollback()
+
+	// For dry-run mode, generate and display execution plan
+	if config.DryRun {
+		plan, err := generateExecutionPlan(ctx, tx, config, fileRecords)
+		if err != nil {
+			return fmt.Errorf("error generating execution plan: %w", err)
+		}
+		log.Print(plan.String())
+		return nil
+	}
 
 	switch config.Sync.SyncMode {
 	case "overwrite":
@@ -114,8 +300,13 @@ func syncDiff(ctx context.Context, tx *sql.Tx, config Config, fileRecords []Data
 
 	// 4. UPDATE processing
 	if len(toUpdate) > 0 {
+		// Convert UpdateOperation to DataRecord for bulkUpdate
+		updateRecords := make([]DataRecord, len(toUpdate))
+		for i, update := range toUpdate {
+			updateRecords[i] = update.After
+		}
 		// Execute individual UPDATEs or try Bulk Update
-		err = bulkUpdate(ctx, tx, config, toUpdate)
+		err = bulkUpdate(ctx, tx, config, updateRecords)
 		if err != nil {
 			return fmt.Errorf("UPDATE error: %w", err)
 		}
@@ -201,7 +392,7 @@ func diffData(
 	config Config,
 	fileRecords []DataRecord,
 	dbRecords map[string]DataRecord,
-) (toInsert []DataRecord, toUpdate []DataRecord, toDelete []DataRecord) {
+) (toInsert []DataRecord, toUpdate []UpdateOperation, toDelete []DataRecord) {
 
 	fileKeys := make(map[string]bool)
 
@@ -229,7 +420,10 @@ func diffData(
 			}
 			if isDiff {
 				// Content differs -> Update
-				toUpdate = append(toUpdate, fileRecord)
+				toUpdate = append(toUpdate, UpdateOperation{
+					Before: dbRecord,
+					After:  fileRecord,
+				})
 			}
 			// If content is same, do nothing
 		}
