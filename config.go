@@ -26,8 +26,9 @@ type SyncConfig struct {
 
 // Config represents configuration information
 type Config struct {
-	DB   DBConfig   `yaml:"db"`
-	Sync SyncConfig `yaml:"sync"`
+	DB     DBConfig   `yaml:"db"`
+	Sync   SyncConfig `yaml:"sync"`
+	DryRun bool       `yaml:"dryRun"` // Enable dry-run mode
 }
 
 // NewDefaultConfig returns a Config struct with default values
@@ -112,6 +113,8 @@ func setDefaultsIfNeeded(cfg *Config) {
 	if cfg.Sync.SyncMode == "" {
 		cfg.Sync.SyncMode = defaultCfg.Sync.SyncMode
 	}
+
+	// Note: DryRun is a bool, so it will default to false if not specified in the config
 }
 
 // ValidateConfig checks if the configuration has all required values
