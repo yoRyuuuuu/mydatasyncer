@@ -36,8 +36,102 @@ git clone https://github.com/yoRyuuuuu/mydatasyncer.git
 cd mydatasyncer
 go build
 ```
-
 ## Usage
+
+### Basic Usage
+
+```bash
+mydatasyncer --config config.yml
+```
+
+### Dry Run Mode
+
+The Dry Run mode allows you to preview synchronization changes without actually modifying the database.
+
+#### Overview
+
+Key benefits of the Dry Run feature:
+
+- **Safe Change Preview**: Review synchronization results without affecting the actual database
+- **Detailed Execution Plan**: Check the number of records to be inserted, updated, or deleted, and which columns will be affected
+- **Transaction Protection**: Changes are automatically rolled back in Dry Run mode, ensuring data integrity
+- **Dual Mode Support**: Available in both overwrite and diff modes
+
+#### Usage
+
+1. Command Line Execution:
+```bash
+# Basic usage
+mydatasyncer --config config.yml --dry-run
+
+# Without config path (uses default mydatasyncer.yml)
+mydatasyncer --dry-run
+```
+
+2. Configuration File:
+```yaml
+# mydatasyncer.yml
+db:
+  dsn: "user:password@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+sync:
+  filePath: "./testdata.csv"
+  tableName: "products"
+  columns:
+    - id
+    - name
+    - price
+  primaryKey: "id"
+  syncMode: "diff"
+  deleteNotInFile: true
+```
+
+#### Output Format
+
+The Dry Run mode displays an execution plan in the following format:
+
+```
+[DRY-RUN MODE] Execution Plan for Table {table_name}
+----------------------------------------------------
+Summary:
+- Sync Mode: {overwrite|diff}
+- Records in File: X
+- Records in Database: Y
+
+Planned Operations:
+1. Delete Operations
+   - Records to Delete: N
+   - Affected Primary Keys: [key list]
+
+2. Insert Operations
+   - Records to Insert: M
+   - Affected Columns: [column1, column2, ...]
+
+3. Update Operations
+   - Records to Update: P
+   - Affected Columns: [column1, column2, ...]
+
+Timestamps:
+- Timestamp Columns to Update: [created_at, updated_at]
+```
+
+#### Important Notes
+
+1. **Transaction Control**
+   - All operations in Dry Run mode are automatically rolled back
+   - No actual database changes are made during execution
+
+2. **Timestamp Columns**
+   - Timestamp columns (created_at, updated_at) are included in the execution plan
+   - Actual values will be set automatically during real execution
+
+3. **Performance**
+   - Minimal performance overhead even with large datasets
+   - Efficient execution plan generation with minimal database impact
+
+4. **Error Handling**
+   - Configuration and connection errors are detected before execution
+   - Error messages are displayed in a clear, understandable format
+
 
 ### Basic Usage
 
