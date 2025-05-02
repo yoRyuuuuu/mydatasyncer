@@ -13,6 +13,7 @@ import (
 func main() {
 	// Define command-line flags
 	configPath := flag.String("config", "", "Path to configuration file (default: mydatasyncer.yml)")
+	dryRun := flag.Bool("dry-run", false, "Execute in dry-run mode (preview changes without applying them)")
 	flag.Parse()
 
 	// Create a context with timeout for the entire process
@@ -21,6 +22,12 @@ func main() {
 
 	// 1. Load configuration
 	config := LoadConfig(*configPath)
+	config.DryRun = *dryRun // Set dry-run mode from command line flag
+
+	if *dryRun {
+		log.Println("Running in DRY-RUN mode - No changes will be applied to the database")
+	}
+
 	if err := ValidateConfig(config); err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}

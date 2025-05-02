@@ -1,3 +1,7 @@
+# Enable dry-run mode
+# If set to true, the tool will only show what changes would be made without actually modifying the database
+dryRun: false
+
 # Database connection settings
 db:
   # Data Source Name (DSN)
