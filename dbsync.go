@@ -300,7 +300,8 @@ func syncDiff(ctx context.Context, tx *sql.Tx, config Config, fileRecords []Data
 
 	// 4. UPDATE processing
 	if len(toUpdate) > 0 {
-		// Convert UpdateOperation to DataRecord for bulkUpdate
+		// Transform the UpdateOperation slice into a DataRecord slice.
+		// This is necessary because the bulkUpdate function requires a slice of DataRecord as input.
 		updateRecords := make([]DataRecord, len(toUpdate))
 		for i, update := range toUpdate {
 			updateRecords[i] = update.After
