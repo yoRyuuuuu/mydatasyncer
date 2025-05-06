@@ -4,16 +4,47 @@ import (
 	"context"
 	"database/sql"
 	"flag"
+	"fmt"
 	"log"
+	"os"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 )
 
+// CustomUsage prints a custom formatted usage message
+func CustomUsage() {
+	fmt.Fprintf(os.Stdout, `mydatasyncer - Database Synchronization Tool
+
+Usage:
+  mydatasyncer [options]
+
+Options:
+`)
+	flag.PrintDefaults()
+	fmt.Fprintf(os.Stdout, `
+Examples:
+  Basic usage:
+    $ mydatasyncer -config ./config.yml
+
+  Preview changes:
+    $ mydatasyncer -config ./config.yml -dry-run
+`)
+}
+
 func main() {
-	// Define command-line flags
-	configPath := flag.String("config", "", "Path to configuration file (default: mydatasyncer.yml)")
-	dryRun := flag.Bool("dry-run", false, "Execute in dry-run mode (preview changes without applying them)")
+	// Set custom usage function
+	flag.Usage = CustomUsage
+
+	// Define command-line flags with detailed descriptions
+	configPath := flag.String("config", "", `Path to the configuration file
+	Default: mydatasyncer.yml in the current directory
+	YAML format configuration file containing database connection details and column mappings`)
+
+	dryRun := flag.Bool("dry-run", false, `Execute in dry-run mode
+	Preview changes that would be made without applying them to the database
+	Use this to verify changes before actual synchronization`)
+
 	flag.Parse()
 
 	// Create a context with timeout for the entire process

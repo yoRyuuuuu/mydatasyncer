@@ -145,24 +145,131 @@ By default, it will use the built-in configuration. You can customize the behavi
 
 ### Configuration
 
-Example configuration:
+The configuration file uses YAML format with the following structure:
 
 ```yaml
 # Database connection settings
 db:
   dsn: "user:password@tcp(127.0.0.1:3306)/testdb?parseTime=true"
 
-# Data synchronization settings
+# Synchronization settings
 sync:
+  # Input file path (CSV format)
   filePath: "./testdata.csv"
+
+  # Target table name
+  tableName: "products"
+
+  # Columns to synchronize
+  columns:
+    - id          # Primary key
+    - name        # Regular column
+    - price       # Regular column
+    - created_at  # Timestamp column
+    - updated_at  # Timestamp column
+
+  # Primary key specification (required)
+  primaryKey: "id"
+
+  # Synchronization mode
+  # - "diff": Differential sync mode. Updates existing records, inserts new ones
+  # - "overwrite": Overwrite mode. Deletes all existing data and replaces with file contents
+  syncMode: "diff"
+
+  # Delete records not in file (only effective in diff mode)
+  deleteNotInFile: true
+
+  # Timestamp column auto-update settings
+  timestamps:
+    createdAt: "created_at"  # Updated only when creating new records
+    updatedAt: "updated_at"  # Updated every time records are modified
+
+  # Immutable columns (excluded from synchronization)
+  immutableColumns:
+    - "created_at"  # Creation timestamp cannot be modified
+```
+
+### Sync Mode Details
+
+#### Differential Mode (diff)
+- Matches existing records using primary key
+- Updates only changed records
+- Inserts new records
+- Deletes records not in file if `deleteNotInFile: true`
+- Executes within a transaction, rolls back all changes on error
+
+#### Overwrite Mode (overwrite)
+- Deletes all existing data in the table
+- Completely replaces with file contents
+- Faster but existing data is completely lost
+- Ignores `deleteNotInFile` setting
+
+### Using Timestamp and Immutable Columns
+
+1. Timestamp Columns
+   - `created_at`: Updated with current timestamp only for new records
+   - `updated_at`: Updated with current timestamp on every record modification
+   - Timestamp columns must be included in the `columns` list
+
+2. Immutable Columns
+   - Specified in `immutableColumns`
+   - Values once set will not be modified during synchronization
+   - Typically used to protect metadata or system management fields
+
+### Usage Examples
+
+1. Product Master Differential Sync
+```yaml
+sync:
+  filePath: "./products.csv"
   tableName: "products"
   columns:
-    - id
+    - product_id
     - name
     - price
-  primaryKey: "id"
-  syncMode: "diff" # "overwrite" or "diff"
-  deleteNotInFile: true
+    - category
+    - created_at
+    - updated_at
+  primaryKey: "product_id"
+  syncMode: "diff"
+  deleteNotInFile: false  # Don't delete products
+  timestamps:
+    createdAt: "created_at"
+    updatedAt: "updated_at"
+```
+
+2. User Data Complete Sync
+```yaml
+sync:
+  filePath: "./users.csv"
+  tableName: "users"
+  columns:
+    - user_id
+    - email
+    - name
+    - status
+    - created_at
+  primaryKey: "user_id"
+  syncMode: "overwrite"  # Complete replacement
+  immutableColumns:
+    - "created_at"  # Preserve creation timestamp
+```
+
+3. Inventory Differential Update (with deletions)
+```yaml
+sync:
+  filePath: "./inventory.csv"
+  tableName: "inventory"
+  columns:
+    - item_id
+    - quantity
+    - last_checked
+    - updated_at
+  primaryKey: "item_id"
+  syncMode: "diff"
+  deleteNotInFile: true  # Remove out-of-stock items
+  timestamps:
+    updatedAt: "updated_at"
 ```
 
 ## Using with Docker
