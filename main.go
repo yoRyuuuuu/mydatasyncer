@@ -29,8 +29,6 @@ Examples:
 
   Preview changes:
     $ mydatasyncer -config ./config.yml -dry-run
-
-For detailed documentation, visit https://github.com/yoRyuuuuu/mydatasyncer
 `)
 }
 
