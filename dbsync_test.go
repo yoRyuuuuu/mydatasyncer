@@ -33,7 +33,6 @@ func setupTestDB(t *testing.T) *sql.DB {
 	}
 
 	rootDSN := fmt.Sprintf("%s:%s@tcp(%s:%s)/", user, password, host, port)
-	// amazonq-ignore-next-line
 	db, err := sql.Open("mysql", rootDSN)
 	if err != nil {
 		t.Fatalf("Failed to open root database: %v", err)
@@ -429,9 +428,9 @@ func TestDryRunDiffMode(t *testing.T) {
 
 	// Test data that would cause all types of operations
 	fileRecords := []DataRecord{
-		{"id": "1", "name": "new1", "value": "new_value1"},    // Update
-		{"id": "4", "name": "new4", "value": "new_value4"},    // Insert
-		{"id": "2", "name": "old2", "value": "old_value2"},    // No change
+		{"id": "1", "name": "new1", "value": "new_value1"}, // Update
+		{"id": "4", "name": "new4", "value": "new_value4"}, // Insert
+		{"id": "2", "name": "old2", "value": "old_value2"}, // No change
 	}
 
 	// Execute dry run
