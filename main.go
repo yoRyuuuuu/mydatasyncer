@@ -101,12 +101,5 @@ func RunApp(configPath string, dryRun bool) error {
 // loadDataFromFile loads data from file using the integrated loader functionality
 func loadDataFromFile(config *Config) ([]DataRecord, error) {
 	dataLoader := GetLoader(config.Sync.FilePath)
-
-	if csvLoader, ok := dataLoader.(*CSVLoader); ok {
-		// csvLoader.WithHeader(true) // WithHeader is deprecated, CSVLoader now always assumes header
-		// csvLoader.WithDelimiter('\t')  // For tab-delimited files
-		_ = csvLoader // Avoid unused variable error if WithDelimiter is also commented out
-	}
-
 	return dataLoader.Load(config.Sync.Columns)
 }
