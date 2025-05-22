@@ -1,11 +1,10 @@
 package main
 
 import (
-	// Added for io.EOF
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort" // Added for SortStrings
+	"sort"
 	"strings"
 	"testing"
 )
@@ -105,6 +104,240 @@ func TestCSVLoader_Load_Success(t *testing.T) {
 				// The fact that Load didn't error implies header was parsed.
 				// A more direct way would be to expose loader.header (if it existed and was populated before returning).
 				// For now, this relies on the loader correctly parsing the header to produce DataRecord keys.
+			}
+		})
+	}
+}
+
+// Helper function to create a temporary JSON file for testing
+func createTempJSON(t *testing.T, name string, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, name)
+	err := os.WriteFile(filePath, []byte(content), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create temp JSON file %s: %v", name, err)
+	}
+	return filePath
+}
+
+func TestJSONLoader_Load_Success(t *testing.T) {
+	tests := []struct {
+		name        string
+		jsonContent string
+		columns     []string
+		expected    []DataRecord
+	}{
+		{
+			name: "valid json array of objects",
+			jsonContent: `[
+{"id": "1", "name": "Product Alpha", "price": "100.50"},
+{"id": "2", "name": "Product Beta", "price": "25.75"}
+]`,
+			columns: []string{"id", "name", "price"},
+			expected: []DataRecord{
+				{"id": "1", "name": "Product Alpha", "price": "100.50"},
+				{"id": "2", "name": "Product Beta", "price": "25.75"},
+			},
+		},
+		{
+			name: "extract specific columns",
+			jsonContent: `[
+{"id": "1", "name": "Product A", "category": "Electronics", "stock": 10},
+{"id": "2", "name": "Product B", "category": "Books", "stock": 5}
+]`,
+			columns: []string{"id", "name", "stock"},
+			expected: []DataRecord{
+				{"id": "1", "name": "Product A", "stock": "10"},
+				{"id": "2", "name": "Product B", "stock": "5"},
+			},
+		},
+		{
+			name:        "empty json array",
+			jsonContent: `[]`,
+			columns:     []string{"id", "name"},
+			expected:    nil,
+		},
+		{
+			name: "numeric and boolean values",
+			jsonContent: `[
+{"id": 1, "name": "Test", "available": true, "rating": 4.5}
+]`,
+			columns: []string{"id", "name", "available", "rating"},
+			expected: []DataRecord{
+				{"id": "1", "name": "Test", "available": "true", "rating": "4.5"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filePath := createTempJSON(t, "test.json", tt.jsonContent)
+			loader := NewJSONLoader(filePath)
+			records, err := loader.Load(tt.columns)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if !reflect.DeepEqual(records, tt.expected) {
+				t.Errorf("Load() got = %v, want %v", records, tt.expected)
+			}
+		})
+	}
+}
+
+func TestJSONLoader_Load_Error(t *testing.T) {
+	tests := []struct {
+		name          string
+		jsonContent   string
+		columns       []string
+		expectedError string
+	}{
+		{
+			name:          "file not found",
+			jsonContent:   "", // Content doesn't matter
+			columns:       []string{"id"},
+			expectedError: "no such file or directory",
+		},
+		{
+			name:          "empty file",
+			jsonContent:   "",
+			columns:       []string{"id"},
+			expectedError: "' is empty", // Changed to be less specific about the path
+		},
+		{
+			name:          "invalid json format",
+			jsonContent:   `[{"id": 1, "name": "Test"}`, // Missing closing bracket and brace
+			columns:       []string{"id", "name"},
+			expectedError: "error unmarshalling JSON data",
+		},
+		{
+			name: "missing required key",
+			jsonContent: `[
+{"id": "1", "name": "Product Alpha"},
+{"id": "2"}
+]`,
+			columns:       []string{"id", "name"},
+			expectedError: "missing required key 'name'",
+		},
+		{
+			name:          "no columns specified",
+			jsonContent:   `[{"id": "1"}]`,
+			columns:       []string{},
+			expectedError: "JSON loader requires at least one column to be specified",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var filePath string
+			if tt.name == "file not found" {
+				filePath = filepath.Join(t.TempDir(), "non_existent_file.json")
+			} else if tt.name == "empty file" {
+				// Create an actual empty file for this specific test case
+				filePath = createTempJSON(t, "test_error.json", "")
+				// For other error cases, createTempJSON will handle content.
+				// The "empty file" check in JSONLoader.Load happens after os.ReadFile but before json.Unmarshal.
+			} else {
+				filePath = createTempJSON(t, "test_error.json", tt.jsonContent)
+			}
+
+			loader := NewJSONLoader(filePath)
+			_, err := loader.Load(tt.columns)
+			if err == nil {
+				t.Fatalf("Load() expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.expectedError) {
+				t.Errorf("Load() error = %q, want error containing %q", err.Error(), tt.expectedError)
+			}
+		})
+	}
+}
+
+func TestGetLoader(t *testing.T) {
+	tests := []struct {
+		name         string
+		filePath     string
+		expectedType interface{}
+		expectError  bool
+	}{
+		{
+			name:         "csv file",
+			filePath:     "testdata.csv",
+			expectedType: &CSVLoader{},
+			expectError:  false,
+		},
+		{
+			name:         "json file",
+			filePath:     "testdata.json",
+			expectedType: &JSONLoader{},
+			expectError:  false,
+		},
+		{
+			name:         "uppercase CSV extension",
+			filePath:     "testdata.CSV",
+			expectedType: &CSVLoader{},
+			expectError:  false,
+		},
+		{
+			name:         "uppercase JSON extension",
+			filePath:     "testdata.JSON",
+			expectedType: &JSONLoader{},
+			expectError:  false,
+		},
+		{
+			name:        "unsupported extension",
+			filePath:    "testdata.txt",
+			expectError: true,
+		},
+		{
+			name:        "no extension",
+			filePath:    "testdata",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create dummy files if they don't cause "file not found" type errors for GetLoader
+			if !tt.expectError || (tt.expectError && tt.name != "unsupported extension" && tt.name != "no extension") {
+				// For GetLoader, the file content doesn't matter, only the path/extension.
+				// However, to avoid os.Stat errors if GetLoader were to check existence (it doesn't currently),
+				// we can create empty dummy files.
+				tempDir := t.TempDir()
+				fullPath := filepath.Join(tempDir, tt.filePath)
+				if _, err := os.Create(fullPath); err != nil {
+					// Allow failure if the path is intentionally malformed for a test
+					if !os.IsNotExist(err) && !strings.Contains(tt.filePath, "non_existent") {
+						t.Fatalf("Failed to create dummy file %s: %v", fullPath, err)
+					}
+				}
+				tt.filePath = fullPath // Use the path in the temp directory
+			} else {
+				// For tests expecting errors due to extension, ensure path is plausible
+				// but doesn't need to exist if GetLoader doesn't check.
+				// If GetLoader *did* check existence, these would need adjustment.
+				tempDir := t.TempDir()
+				tt.filePath = filepath.Join(tempDir, tt.filePath)
+			}
+
+			loader, err := GetLoader(tt.filePath)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("GetLoader() expected error for %s, got nil", tt.filePath)
+				}
+				// Optionally, check for specific error message if needed
+				//
+				//	if !strings.Contains(err.Error(), "unsupported file type") {
+				//		t.Errorf("GetLoader() error = %q, want error containing 'unsupported file type'", err.Error())
+				//	}
+			} else {
+				if err != nil {
+					t.Errorf("GetLoader() for %s error = %v, want nil", tt.filePath, err)
+				}
+				if reflect.TypeOf(loader) != reflect.TypeOf(tt.expectedType) {
+					t.Errorf("GetLoader() for %s got type %T, want type %T", tt.filePath, loader, tt.expectedType)
+				}
 			}
 		})
 	}
