@@ -276,9 +276,19 @@ func generateExecutionPlan(ctx context.Context, tx *sql.Tx, config Config, fileR
 
 // syncData synchronizes data between file and database
 func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []DataRecord) error {
-	if len(fileRecords) == 0 && config.Sync.SyncMode != "diff" { // For diff mode, empty file might mean delete all
-		log.Println("No records loaded from file. Nothing to sync.")
-		return nil
+	// If no records to sync, exit early, unless it's overwrite mode (which should clear the table)
+	// or diff mode with deleteNotInFile (which might mean delete all).
+	if len(fileRecords) == 0 {
+		if config.Sync.SyncMode == "overwrite" {
+			// Proceed to clear the table in overwrite mode
+			log.Println("File is empty. In overwrite mode, all existing data will be deleted.")
+		} else if config.Sync.SyncMode == "diff" && config.Sync.DeleteNotInFile {
+			// Proceed to potentially delete all records in diff mode
+			log.Println("File is empty. In diff mode with deleteNotInFile, all existing data may be deleted.")
+		} else {
+			log.Println("No records loaded from file. Nothing to sync.")
+			return nil
+		}
 	}
 
 	tx, err := db.BeginTx(ctx, nil)
@@ -290,6 +300,7 @@ func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []Data
 	// Determine actual columns to sync based on CSV header and DB table schema
 	var actualSyncColumns []string
 	if len(fileRecords) > 0 { // Need at least one record to get headers if not passed differently
+		// Get headers from the first record
 		csvHeaders := make([]string, 0, len(fileRecords[0]))
 		for k := range fileRecords[0] {
 			csvHeaders = append(csvHeaders, k)
@@ -306,8 +317,8 @@ func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []Data
 			return fmt.Errorf("failed to determine actual columns for synchronization: %w", err)
 		}
 		log.Printf("Actual columns to be synced based on CSV header and DB schema: %v", actualSyncColumns)
-	} else if config.Sync.SyncMode == "diff" && config.Sync.DeleteNotInFile {
-		// Handle case for diff mode where file is empty, meaning all DB records might be deleted.
+	} else if (config.Sync.SyncMode == "diff" && config.Sync.DeleteNotInFile) || config.Sync.SyncMode == "overwrite" {
+		// Handle case for diff mode where file is empty (delete all) OR overwrite mode with empty file (clear table)
 		dbTableCols, err := getTableColumns(ctx, tx, config.Sync.TableName)
 		if err != nil {
 			return fmt.Errorf("failed to get database table columns for diff delete: %w", err)
@@ -323,9 +334,11 @@ func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []Data
 			log.Printf("Warning: For diff-delete-all, primary key '%s' was not explicitly in dbTableCols, this is unexpected. Assuming it's part of the table.", config.Sync.PrimaryKey)
 			// If PK is truly missing from table, getTableColumns would be an issue, or subsequent ops.
 		}
-		log.Printf("File is empty for diff mode with deleteNotInFile. Using all DB columns for potential deletion: %v", actualSyncColumns)
+		log.Printf("File is empty for %s mode. Using all DB columns for operation: %v", config.Sync.SyncMode, actualSyncColumns)
 	} else {
-		log.Println("No records loaded from file, and not in diff mode with deleteNotInFile. Nothing to sync.")
+		// This case should ideally be caught by the initial len(fileRecords) == 0 check at the function start.
+		// If reached, it means fileRecords is empty, not overwrite, and not (diff + deleteNotInFile).
+		log.Println("No records loaded from file and no operations to perform based on sync mode. Nothing to sync.")
 		return nil
 	}
 

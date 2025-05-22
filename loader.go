@@ -2,8 +2,11 @@ package main
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 // DataRecord represents one record of data loaded from file
@@ -83,10 +86,65 @@ func (l *CSVLoader) Load(_ []string) ([]DataRecord, error) {
 	return records, nil
 }
 
+// JSONLoader loads data from JSON files
+type JSONLoader struct {
+	FilePath string // Path to file to be loaded
+}
+
+// NewJSONLoader creates a new JSON loader instance
+func NewJSONLoader(filePath string) *JSONLoader {
+	return &JSONLoader{
+		FilePath: filePath,
+	}
+}
+
+// Load loads data from JSON file.
+// It expects an array of objects, and uses the 'columns' argument to extract specific fields.
+func (l *JSONLoader) Load(columns []string) ([]DataRecord, error) {
+	if len(columns) == 0 {
+		return nil, fmt.Errorf("JSON loader requires at least one column to be specified")
+	}
+
+	fileData, err := os.ReadFile(l.FilePath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read JSON file '%s': %w", l.FilePath, err)
+	}
+
+	if len(fileData) == 0 {
+		return nil, fmt.Errorf("JSON file '%s' is empty", l.FilePath)
+	}
+
+	var jsonData []map[string]interface{}
+	err = json.Unmarshal(fileData, &jsonData)
+	if err != nil {
+		return nil, fmt.Errorf("error unmarshalling JSON data from '%s': %w", l.FilePath, err)
+	}
+
+	var records []DataRecord
+	for i, jsonObj := range jsonData {
+		record := make(DataRecord)
+		for _, colName := range columns {
+			val, ok := jsonObj[colName]
+			if !ok {
+				return nil, fmt.Errorf("JSON file '%s', record %d: missing required key '%s'", l.FilePath, i, colName)
+			}
+			record[colName] = fmt.Sprintf("%v", val) // Convert value to string
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
 // GetLoader creates a loader instance for the specified file path
 // Returns appropriate loader based on file extension
-func GetLoader(filePath string) Loader {
-	// Currently only supports CSV
-	// TODO: Add support for other formats (Excel, JSON, XML, etc.) in the future
-	return NewCSVLoader(filePath)
+func GetLoader(filePath string) (Loader, error) {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".csv":
+		return NewCSVLoader(filePath), nil
+	case ".json":
+		return NewJSONLoader(filePath), nil
+	default:
+		return nil, fmt.Errorf("unsupported file type: '%s'. Only .csv and .json are supported", ext)
+	}
 }
