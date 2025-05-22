@@ -1,0 +1,12 @@
+[
+  {
+    "id": 201,
+    "name": "Json Diff User New",
+    "email": "json.diff.new@example.com"
+  },
+  {
+    "id": 202,
+    "name": "Json Diff User Updated",
+    "email": "json.diff.updated.new@example.com"
+  }
+]
