@@ -47,58 +47,65 @@ func main() {
 
 	flag.Parse()
 
+	if err := RunApp(*configPath, *dryRun); err != nil {
+		log.Fatalf("Application error: %v", err)
+	}
+}
+
+func RunApp(configPath string, dryRun bool) error {
 	// Create a context with timeout for the entire process
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	// 1. Load configuration
-	config := LoadConfig(*configPath)
-	config.DryRun = *dryRun // Set dry-run mode from command line flag
+	config := LoadConfig(configPath)
+	config.DryRun = dryRun // Set dry-run mode from command line flag
 
-	if *dryRun {
+	if dryRun {
 		log.Println("Running in DRY-RUN mode - No changes will be applied to the database")
 	}
 
 	if err := ValidateConfig(config); err != nil {
-		log.Fatalf("Configuration error: %v", err)
+		return fmt.Errorf("configuration error: %w", err)
 	}
 
 	// 2. Database connection
 	db, err := sql.Open("mysql", config.DB.DSN)
 	if err != nil {
-		log.Fatalf("Database connection error: %v", err)
+		return fmt.Errorf("database connection error: %w", err)
 	}
 	defer db.Close()
 	err = db.PingContext(ctx)
 	if err != nil {
-		log.Fatalf("Database connectivity error: %v", err)
+		return fmt.Errorf("database connectivity error: %w", err)
 	}
 	log.Println("Database connection successful")
 
 	// 3. File loading and parsing
-	records, err := loadDataFromFile(config.Sync.FilePath, config.Sync.Columns)
+	records, err := loadDataFromFile(&config)
 	if err != nil {
-		log.Fatalf("File reading error: %v", err)
+		return fmt.Errorf("file reading error: %w", err)
 	}
 	log.Printf("Loaded %d records from file.", len(records))
 
 	// 4. Synchronization process - now uses the function from dbsync.go
 	err = syncData(ctx, db, config, records)
 	if err != nil {
-		log.Fatalf("Data synchronization error: %v", err)
+		return fmt.Errorf("data synchronization error: %w", err)
 	}
 
 	log.Println("Data synchronization completed successfully.")
+	return nil
 }
 
 // loadDataFromFile loads data from file using the integrated loader functionality
-func loadDataFromFile(filePath string, columns []string) ([]DataRecord, error) {
-	dataLoader := GetLoader(filePath)
+func loadDataFromFile(config *Config) ([]DataRecord, error) {
+	dataLoader := GetLoader(config.Sync.FilePath)
 
 	if csvLoader, ok := dataLoader.(*CSVLoader); ok {
 		csvLoader.WithHeader(true)
 		// csvLoader.WithDelimiter('\t')  // For tab-delimited files
 	}
 
-	return dataLoader.Load(columns)
+	return dataLoader.Load(config.Sync.Columns)
 }
