@@ -1,0 +1,11 @@
+[
+  {
+    "id": 401,
+    "name": "User With Email",
+    "email": "with.email@example.com"
+  },
+  {
+    "id": 402,
+    "name": "User Without Email"
+  }
+]

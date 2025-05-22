@@ -1,0 +1,8 @@
+db:
+  dsn: "user:password@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+sync:
+  filePath: "testdata/e2e_data_missing_key.json"
+  tableName: "test_table"
+  columns: ["id", "name", "email"]
+  primaryKey: "id"
+  syncMode: "overwrite"
