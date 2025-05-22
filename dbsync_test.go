@@ -4,7 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
+	"os"   // For DeepEqual
+	"sort" // For sort.Strings
 	"strings"
 	"testing"
 
@@ -61,14 +62,14 @@ func setupTestDB(t *testing.T) *sql.DB {
 	}
 
 	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS test_table (
-			id VARCHAR(255) PRIMARY KEY,
-			name VARCHAR(255),
-			value VARCHAR(255),
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-		)
-	`)
+CREATE TABLE IF NOT EXISTS test_table (
+id VARCHAR(255) PRIMARY KEY,
+name VARCHAR(255),
+value VARCHAR(255),
+created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+)
+`)
 	if err != nil {
 		t.Fatalf("Failed to create test table: %v", err)
 	}
@@ -181,6 +182,120 @@ func TestSyncOverwrite(t *testing.T) {
 			t.Errorf("Sync result mismatch (-want +got):\n%s", diff)
 		}
 	})
+
+	t.Run("overwrite with empty config.Sync.Columns (CSV header dictates)", func(t *testing.T) {
+		cleanupTestData(t, db)
+		localConfig := createTestConfig()
+		localConfig.Sync.Columns = []string{} // Empty
+		localConfig.Sync.SyncMode = "overwrite"
+
+		// Insert some initial data that should be wiped
+		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)",
+			"0", "initial_data", "initial_value")
+		if err != nil {
+			t.Fatalf("Failed to insert initial test data: %v", err)
+		}
+
+		// File has an extra column not in DB.
+		fileRecords := []DataRecord{
+			{"id": "1", "name": "file_name1", "value": "file_value1", "extra_csv_col": "ignore_this"},
+			{"id": "2", "name": "file_name2", "value": "file_value2", "extra_csv_col": "ignore_this_too"},
+		}
+
+		err = syncData(context.Background(), db, localConfig, fileRecords)
+		if err != nil {
+			t.Fatalf("Failed to sync data: %v", err)
+		}
+
+		// Verify: DB should only contain fileRecords, considering only common columns (id, name, value).
+		expectedDB := []DataRecord{
+			{"id": "1", "name": "file_name1", "value": "file_value1"},
+			{"id": "2", "name": "file_name2", "value": "file_value2"},
+		}
+
+		rows, err := db.Query("SELECT id, name, value FROM test_table ORDER BY id")
+		if err != nil {
+			t.Fatalf("Failed to query results: %v", err)
+		}
+		defer rows.Close()
+
+		var result []DataRecord
+		for rows.Next() {
+			var id, name, value string
+			if err := rows.Scan(&id, &name, &value); err != nil {
+				t.Fatalf("Failed to scan row: %v", err)
+			}
+			result = append(result, DataRecord{"id": id, "name": name, "value": value})
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("Error during row iteration: %v", err)
+		}
+
+		if diff := cmp.Diff(expectedDB, result); diff != "" {
+			t.Errorf("Sync result mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("overwrite with config.Sync.Columns filtering", func(t *testing.T) {
+		cleanupTestData(t, db)
+		localConfig := createTestConfig()
+		localConfig.Sync.Columns = []string{"id", "name"} // Only sync id and name
+		localConfig.Sync.SyncMode = "overwrite"
+
+		// Insert some initial data that should be wiped
+		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)",
+			"0", "initial_data", "initial_value")
+		if err != nil {
+			t.Fatalf("Failed to insert initial test data: %v", err)
+		}
+
+		// File has id, name, value. "value" should be ignored during insert.
+		fileRecords := []DataRecord{
+			{"id": "1", "name": "file_name1", "value": "file_value1_ignored"},
+			{"id": "2", "name": "file_name2", "value": "file_value2_ignored"},
+		}
+
+		err = syncData(context.Background(), db, localConfig, fileRecords)
+		if err != nil {
+			t.Fatalf("Failed to sync data: %v", err)
+		}
+
+		// Verify: DB should contain records with "id", "name" from file.
+		// "value" column should be NULL/default as it was not part of sync columns.
+		expectedDB := []DataRecord{
+			{"id": "1", "name": "file_name1", "value": ""}, // value will be empty string if DB column is nullable string and not set
+			{"id": "2", "name": "file_name2", "value": ""},
+		}
+
+		rows, err := db.Query("SELECT id, name, value FROM test_table ORDER BY id")
+		if err != nil {
+			t.Fatalf("Failed to query results: %v", err)
+		}
+		defer rows.Close()
+
+		var result []DataRecord
+		for rows.Next() {
+			var idRes, nameRes string
+			var valueRes sql.NullString
+			if err := rows.Scan(&idRes, &nameRes, &valueRes); err != nil {
+				t.Fatalf("Failed to scan row: %v", err)
+			}
+			record := DataRecord{"id": idRes, "name": nameRes}
+			if valueRes.Valid {
+				record["value"] = valueRes.String
+			} else {
+				record["value"] = ""
+			}
+			result = append(result, record)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("Error during row iteration: %v", err)
+		}
+
+		if diff := cmp.Diff(expectedDB, result); diff != "" {
+			t.Errorf("Sync result mismatch (-want +got):\n%s", diff)
+		}
+	})
 }
 
 func TestSyncDiff(t *testing.T) {
@@ -272,7 +387,7 @@ func TestSyncDiff(t *testing.T) {
 	})
 
 	t.Run("diff sync with immutable columns", func(t *testing.T) {
-		db := setupTestDB(t)
+		db := setupTestDB(t) // db is already set up for TestSyncDiff
 		defer db.Close()
 
 		cleanupTestData(t, db)
@@ -283,15 +398,15 @@ func TestSyncDiff(t *testing.T) {
 			t.Fatalf("Failed to insert test data: %v", err)
 		}
 
-		config := createTestConfig()
-		config.Sync.SyncMode = "diff"
-		config.Sync.ImmutableColumns = []string{"name"}
+		localConfig := createTestConfig() // Use a local config for this subtest
+		localConfig.Sync.SyncMode = "diff"
+		localConfig.Sync.ImmutableColumns = []string{"name"}
 
 		fileRecords := []DataRecord{
 			{"id": "1", "name": "new_name", "value": "new_value"},
 		}
 
-		err = syncData(context.Background(), db, config, fileRecords)
+		err = syncData(context.Background(), db, localConfig, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -307,6 +422,114 @@ func TestSyncDiff(t *testing.T) {
 		}
 		if value != "new_value" {
 			t.Errorf("value was not updated. Expected 'new_value', got '%s'", value)
+		}
+	})
+
+	t.Run("diff sync with empty config.Sync.Columns (CSV header dictates)", func(t *testing.T) {
+		cleanupTestData(t, db)
+		localConfig := createTestConfig()
+		localConfig.Sync.Columns = []string{} // Empty, so CSV header and DB cols determine sync
+		localConfig.Sync.SyncMode = "diff"
+
+		// DB has id, name, value
+		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)",
+			"1", "db_name1", "db_value1")
+		if err != nil {
+			t.Fatalf("Failed to insert test data: %v", err)
+		}
+
+		fileRecords := []DataRecord{
+			{"id": "1", "name": "file_name1", "value": "file_value1", "extra_csv_col": "ignore_this"},
+			{"id": "2", "name": "file_name2", "value": "file_value2", "extra_csv_col": "ignore_this_too"},
+		}
+
+		err = syncData(context.Background(), db, localConfig, fileRecords)
+		if err != nil {
+			t.Fatalf("Failed to sync data: %v", err)
+		}
+
+		expectedDB := []DataRecord{
+			{"id": "1", "name": "file_name1", "value": "file_value1"},
+			{"id": "2", "name": "file_name2", "value": "file_value2"},
+		}
+
+		rows, err := db.Query("SELECT id, name, value FROM test_table ORDER BY id")
+		if err != nil {
+			t.Fatalf("Failed to query results: %v", err)
+		}
+		defer rows.Close()
+
+		var result []DataRecord
+		for rows.Next() {
+			var id, name, value string
+			if err := rows.Scan(&id, &name, &value); err != nil {
+				t.Fatalf("Failed to scan row: %v", err)
+			}
+			result = append(result, DataRecord{"id": id, "name": name, "value": value})
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("Error during row iteration: %v", err)
+		}
+
+		if diff := cmp.Diff(expectedDB, result); diff != "" {
+			t.Errorf("Sync result mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("diff sync with config.Sync.Columns filtering", func(t *testing.T) {
+		cleanupTestData(t, db)
+		localConfig := createTestConfig()
+		localConfig.Sync.Columns = []string{"id", "name"}
+		localConfig.Sync.SyncMode = "diff"
+
+		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)",
+			"1", "db_name1", "db_value1")
+		if err != nil {
+			t.Fatalf("Failed to insert test data: %v", err)
+		}
+
+		fileRecords := []DataRecord{
+			{"id": "1", "name": "file_name1", "value": "file_value1"},
+			{"id": "2", "name": "file_name2", "value": "file_value2"},
+		}
+
+		err = syncData(context.Background(), db, localConfig, fileRecords)
+		if err != nil {
+			t.Fatalf("Failed to sync data: %v", err)
+		}
+
+		expectedDB := []DataRecord{
+			{"id": "1", "name": "file_name1", "value": "db_value1"},
+			{"id": "2", "name": "file_name2", "value": ""},
+		}
+
+		rows, err := db.Query("SELECT id, name, value FROM test_table ORDER BY id")
+		if err != nil {
+			t.Fatalf("Failed to query results: %v", err)
+		}
+		defer rows.Close()
+
+		var result []DataRecord
+		for rows.Next() {
+			var idRes, nameRes string
+			var valueRes sql.NullString
+			if err := rows.Scan(&idRes, &nameRes, &valueRes); err != nil {
+				t.Fatalf("Failed to scan row: %v", err)
+			}
+			record := DataRecord{"id": idRes, "name": nameRes}
+			if valueRes.Valid {
+				record["value"] = valueRes.String
+			} else {
+				record["value"] = ""
+			}
+			result = append(result, record)
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("Error during row iteration: %v", err)
+		}
+
+		if diff := cmp.Diff(expectedDB, result); diff != "" {
+			t.Errorf("Sync result mismatch (-want +got):\n%s", diff)
 		}
 	})
 }
@@ -326,7 +549,8 @@ func TestDiffData(t *testing.T) {
 		"3": {"id": "3", "name": "test3", "value": "value3"},
 	}
 
-	toInsert, toUpdate, toDelete := diffData(config, fileRecords, dbRecords)
+	actualSyncCols := config.Sync.Columns
+	toInsert, toUpdate, toDelete := diffData(config, fileRecords, dbRecords, actualSyncCols)
 
 	expectedInsert := []DataRecord{{"id": "4", "name": "test4", "value": "value4"}}
 	expectedUpdate := []UpdateOperation{
@@ -354,7 +578,6 @@ func TestDryRunOverwriteMode(t *testing.T) {
 
 	cleanupTestData(t, db)
 
-	// Setup initial data
 	_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?), (?, ?, ?)",
 		"1", "old1", "old_value1",
 		"2", "old2", "old_value2")
@@ -362,24 +585,20 @@ func TestDryRunOverwriteMode(t *testing.T) {
 		t.Fatalf("Failed to insert test data: %v", err)
 	}
 
-	// Setup test config with dry-run enabled
 	config := createTestConfig()
 	config.DryRun = true
 	config.Sync.SyncMode = "overwrite"
 
-	// Test data for overwrite
 	fileRecords := []DataRecord{
 		{"id": "3", "name": "new3", "value": "new_value3"},
 		{"id": "4", "name": "new4", "value": "new_value4"},
 	}
 
-	// Execute dry run
 	err = syncData(context.Background(), db, config, fileRecords)
 	if err != nil {
 		t.Fatalf("Failed to execute dry run: %v", err)
 	}
 
-	// Verify that no changes were made to the database
 	rows, err := db.Query("SELECT id, name, value FROM test_table ORDER BY id")
 	if err != nil {
 		t.Fatalf("Failed to query results: %v", err)
@@ -395,7 +614,6 @@ func TestDryRunOverwriteMode(t *testing.T) {
 		result = append(result, DataRecord{"id": id, "name": name, "value": value})
 	}
 
-	// Expected data should be unchanged
 	expectedRecords := []DataRecord{
 		{"id": "1", "name": "old1", "value": "old_value1"},
 		{"id": "2", "name": "old2", "value": "old_value2"},
@@ -412,7 +630,6 @@ func TestDryRunDiffMode(t *testing.T) {
 
 	cleanupTestData(t, db)
 
-	// Setup initial data
 	_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?)",
 		"1", "old1", "old_value1",
 		"2", "old2", "old_value2",
@@ -421,25 +638,21 @@ func TestDryRunDiffMode(t *testing.T) {
 		t.Fatalf("Failed to insert test data: %v", err)
 	}
 
-	// Setup test config with dry-run enabled
 	config := createTestConfig()
 	config.DryRun = true
 	config.Sync.SyncMode = "diff"
 
-	// Test data that would cause all types of operations
 	fileRecords := []DataRecord{
-		{"id": "1", "name": "new1", "value": "new_value1"}, // Update
-		{"id": "4", "name": "new4", "value": "new_value4"}, // Insert
-		{"id": "2", "name": "old2", "value": "old_value2"}, // No change
+		{"id": "1", "name": "new1", "value": "new_value1"},
+		{"id": "4", "name": "new4", "value": "new_value4"},
+		{"id": "2", "name": "old2", "value": "old_value2"},
 	}
 
-	// Execute dry run
 	err = syncData(context.Background(), db, config, fileRecords)
 	if err != nil {
 		t.Fatalf("Failed to execute dry run: %v", err)
 	}
 
-	// Verify that no changes were made to the database
 	rows, err := db.Query("SELECT id, name, value FROM test_table ORDER BY id")
 	if err != nil {
 		t.Fatalf("Failed to query results: %v", err)
@@ -455,7 +668,6 @@ func TestDryRunDiffMode(t *testing.T) {
 		result = append(result, DataRecord{"id": id, "name": name, "value": value})
 	}
 
-	// Expected data should be unchanged
 	expectedRecords := []DataRecord{
 		{"id": "1", "name": "old1", "value": "old_value1"},
 		{"id": "2", "name": "old2", "value": "old_value2"},
@@ -492,7 +704,6 @@ func TestExecutionPlanString(t *testing.T) {
 
 	output := plan.String()
 
-	// Verify that the output contains all necessary sections
 	expectedSections := []string{
 		"[DRY-RUN Mode] Execution Plan",
 		"Sync Mode: diff",
@@ -511,7 +722,6 @@ func TestExecutionPlanString(t *testing.T) {
 		}
 	}
 
-	// Verify that the output contains operation details
 	expectedDetails := []string{
 		"id: 4",
 		"name: new4",
@@ -527,5 +737,178 @@ func TestExecutionPlanString(t *testing.T) {
 		if !strings.Contains(output, detail) {
 			t.Errorf("ExecutionPlan.String() output missing detail: %s", detail)
 		}
+	}
+}
+
+// TestDetermineActualSyncColumns should be a top-level function
+func TestDetermineActualSyncColumns(t *testing.T) {
+	tests := []struct {
+		name                string
+		csvHeaders          []string
+		dbTableColumns      []string
+		configSyncColumns   []string
+		pkName              string
+		expectedSyncColumns []string
+		expectedError       string
+	}{
+		{
+			name:                "config.Sync.Columns empty - perfect match",
+			csvHeaders:          []string{"id", "name", "value"},
+			dbTableColumns:      []string{"id", "name", "value", "created_at"},
+			configSyncColumns:   []string{},
+			pkName:              "id",
+			expectedSyncColumns: []string{"id", "name", "value"},
+			expectedError:       "",
+		},
+		{
+			name:                "config.Sync.Columns empty - CSV has extra cols",
+			csvHeaders:          []string{"id", "name", "value", "extra_csv_col"},
+			dbTableColumns:      []string{"id", "name", "value"},
+			configSyncColumns:   []string{},
+			pkName:              "id",
+			expectedSyncColumns: []string{"id", "name", "value"},
+			expectedError:       "",
+		},
+		{
+			name:                "config.Sync.Columns empty - DB has extra cols",
+			csvHeaders:          []string{"id", "name", "value"},
+			dbTableColumns:      []string{"id", "name", "value", "extra_db_col"},
+			configSyncColumns:   []string{},
+			pkName:              "id",
+			expectedSyncColumns: []string{"id", "name", "value"},
+			expectedError:       "",
+		},
+		{
+			name:                "config.Sync.Columns empty - no common columns",
+			csvHeaders:          []string{"col1", "col2"},
+			dbTableColumns:      []string{"col3", "col4"},
+			configSyncColumns:   []string{},
+			pkName:              "id",
+			expectedSyncColumns: nil,
+			expectedError:       "no matching columns found between CSV header",
+		},
+		{
+			name:                "config.Sync.Columns empty - PK not in common columns",
+			csvHeaders:          []string{"name", "value"},
+			dbTableColumns:      []string{"id", "name", "value"},
+			configSyncColumns:   []string{},
+			pkName:              "id",
+			expectedSyncColumns: nil,
+			expectedError:       "configured primary key 'id' is not among the final actual sync columns",
+		},
+		{
+			name:                "config.Sync.Columns empty - PK specified but not in DB",
+			csvHeaders:          []string{"id", "name"},
+			dbTableColumns:      []string{"name", "value"},
+			configSyncColumns:   []string{},
+			pkName:              "id",
+			expectedSyncColumns: nil,
+			expectedError:       "configured primary key 'id' is not among the final actual sync columns",
+		},
+		{
+			name:                "config.Sync.Columns specified - perfect match",
+			csvHeaders:          []string{"id", "name", "value"},
+			dbTableColumns:      []string{"id", "name", "value", "created_at"},
+			configSyncColumns:   []string{"id", "name", "value"},
+			pkName:              "id",
+			expectedSyncColumns: []string{"id", "name", "value"},
+			expectedError:       "",
+		},
+		{
+			name:                "config.Sync.Columns specified - filters CSV/DB common columns",
+			csvHeaders:          []string{"id", "name", "value", "extra_csv_col"},
+			dbTableColumns:      []string{"id", "name", "value", "extra_db_col"},
+			configSyncColumns:   []string{"id", "name"},
+			pkName:              "id",
+			expectedSyncColumns: []string{"id", "name"},
+			expectedError:       "",
+		},
+		{
+			name:                "config.Sync.Columns specified - one col not in CSV",
+			csvHeaders:          []string{"id", "name"},
+			dbTableColumns:      []string{"id", "name", "value"},
+			configSyncColumns:   []string{"id", "name", "value"},
+			pkName:              "id",
+			expectedSyncColumns: []string{"id", "name"},
+			expectedError:       "",
+		},
+		{
+			name:                "config.Sync.Columns specified - one col not in DB",
+			csvHeaders:          []string{"id", "name", "value"},
+			dbTableColumns:      []string{"id", "name"},
+			configSyncColumns:   []string{"id", "name", "value"},
+			pkName:              "id",
+			expectedSyncColumns: []string{"id", "name"},
+			expectedError:       "",
+		},
+		{
+			name:                "config.Sync.Columns specified - no resulting common columns",
+			csvHeaders:          []string{"id", "name"},
+			dbTableColumns:      []string{"id", "name"},
+			configSyncColumns:   []string{"value1", "value2"},
+			pkName:              "id",
+			expectedSyncColumns: nil,
+			expectedError:       "no matching columns after filtering with config.Sync.Columns",
+		},
+		{
+			name:                "config.Sync.Columns specified - PK in config but not in CSV after filter",
+			csvHeaders:          []string{"id", "name", "value"},
+			dbTableColumns:      []string{"id", "name", "value"},
+			configSyncColumns:   []string{"name", "value"},
+			pkName:              "id",
+			expectedSyncColumns: nil,
+			expectedError:       "configured primary key 'id' is not among the final actual sync columns",
+		},
+		{
+			name:                "CSV header empty",
+			csvHeaders:          []string{},
+			dbTableColumns:      []string{"id", "name", "value"},
+			configSyncColumns:   []string{"id", "name"},
+			pkName:              "id",
+			expectedSyncColumns: nil,
+			expectedError:       "CSV header is empty",
+		},
+		{
+			name:                "No PK specified - config.Sync.Columns empty",
+			csvHeaders:          []string{"colA", "colB"},
+			dbTableColumns:      []string{"colA", "colB", "colC"},
+			configSyncColumns:   []string{},
+			pkName:              "",
+			expectedSyncColumns: []string{"colA", "colB"},
+			expectedError:       "",
+		},
+		{
+			name:                "No PK specified - config.Sync.Columns present",
+			csvHeaders:          []string{"colA", "colB", "colD"},
+			dbTableColumns:      []string{"colA", "colB", "colC"},
+			configSyncColumns:   []string{"colA", "colB"},
+			pkName:              "",
+			expectedSyncColumns: []string{"colA", "colB"},
+			expectedError:       "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual, err := determineActualSyncColumns(tt.csvHeaders, tt.dbTableColumns, tt.configSyncColumns, tt.pkName)
+
+			if tt.expectedError != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.expectedError)
+				}
+				if !strings.Contains(err.Error(), tt.expectedError) {
+					t.Errorf("expected error string %q to be part of actual error %q", tt.expectedError, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("expected no error, got: %v", err)
+				}
+				sort.Strings(actual)
+				sort.Strings(tt.expectedSyncColumns)
+				if diff := cmp.Diff(actual, tt.expectedSyncColumns); diff != "" {
+					t.Errorf("Sync columns mismatch (-want +got):\n%s", diff)
+				}
+			}
+		})
 	}
 }
