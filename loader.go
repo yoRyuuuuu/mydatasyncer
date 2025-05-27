@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,7 +59,7 @@ func (l *CSVLoader) Load(_ []string) ([]DataRecord, error) {
 	// Read header row
 	headerNames, err := reader.Read()
 	if err != nil {
-		if err == csv.ErrFieldCount || err.Error() == "EOF" { // Check for empty file or just header
+		if err == csv.ErrFieldCount || errors.Is(err, io.EOF) { // Check for empty file or just header
 			return nil, fmt.Errorf("CSV file '%s' must contain a header row and at least one data row: %w", l.FilePath, err)
 		}
 		return nil, fmt.Errorf("error reading header row from CSV file '%s': %w", l.FilePath, err)
