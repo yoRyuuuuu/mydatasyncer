@@ -169,51 +169,66 @@ func getTableColumns(ctx context.Context, tx *sql.Tx, tableName string) ([]strin
 	return columns, nil
 }
 
+// findCommonColumns returns the intersection of CSV headers and DB table columns
+func findCommonColumns(csvHeaders []string, dbTableColumns []string) []string {
+	var commonColumns []string
+	for _, csvHeader := range csvHeaders {
+		if slices.Contains(dbTableColumns, csvHeader) {
+			if !slices.Contains(commonColumns, csvHeader) {
+				commonColumns = append(commonColumns, csvHeader)
+			}
+		}
+	}
+	return commonColumns
+}
+
+// filterColumnsByConfig filters common columns using the config.Sync.Columns specification
+func filterColumnsByConfig(commonColumns []string, configSyncColumns []string) []string {
+	if len(configSyncColumns) == 0 {
+		return commonColumns
+	}
+
+	var filteredColumns []string
+	for _, col := range commonColumns {
+		if slices.Contains(configSyncColumns, col) {
+			filteredColumns = append(filteredColumns, col)
+		}
+	}
+	return filteredColumns
+}
+
+// validatePrimaryKeyInColumns ensures the primary key is included in the sync columns
+func validatePrimaryKeyInColumns(actualSyncColumns []string, pkName string) error {
+	if pkName != "" && !slices.Contains(actualSyncColumns, pkName) {
+		return fmt.Errorf("configured primary key '%s' is not among the final actual sync columns: %v. It must be present in CSV header, DB table, and config.Sync.Columns (if specified)", pkName, actualSyncColumns)
+	}
+	return nil
+}
+
 // determineActualSyncColumns determines the columns to be synced.
 // If configSyncColumns (config.Sync.Columns) is provided, it acts as a filter:
 // actual columns will be the intersection of csvHeaders, dbTableColumns, and configSyncColumns.
 // If configSyncColumns is empty, actual columns will be the intersection of csvHeaders and dbTableColumns.
-func determineActualSyncColumns(csvHeaders []string, dbTableColumns []string, configSyncColumns []string, pkName string) (actualSyncColumns []string, err error) {
+func determineActualSyncColumns(csvHeaders []string, dbTableColumns []string, configSyncColumns []string, pkName string) ([]string, error) {
 	if len(csvHeaders) == 0 {
 		return nil, fmt.Errorf("CSV header is empty, cannot determine sync columns")
 	}
 
-	candidateColumns := []string{}
-
 	// Step 1: Find intersection of CSV headers and DB table columns
-	for _, csvHeader := range csvHeaders {
-		if slices.Contains(dbTableColumns, csvHeader) { // Case-sensitive match
-			if !slices.Contains(candidateColumns, csvHeader) {
-				candidateColumns = append(candidateColumns, csvHeader)
-			}
-		}
-	}
-
-	if len(candidateColumns) == 0 {
+	commonColumns := findCommonColumns(csvHeaders, dbTableColumns)
+	if len(commonColumns) == 0 {
 		return nil, fmt.Errorf("no matching columns found between CSV header (%v) and DB table columns (%v)", csvHeaders, dbTableColumns)
 	}
 
-	// Step 2: If config.Sync.Columns is specified, filter candidateColumns further
-	if len(configSyncColumns) > 0 {
-		filteredColumns := []string{}
-		for _, col := range candidateColumns {
-			if slices.Contains(configSyncColumns, col) {
-				filteredColumns = append(filteredColumns, col)
-			}
-		}
-		actualSyncColumns = filteredColumns
-		if len(actualSyncColumns) == 0 {
-			return nil, fmt.Errorf("no matching columns after filtering with config.Sync.Columns (%v). Intersection of CSV headers (%v) and DB columns (%v) was (%v), but none of these were in config.Sync.Columns", configSyncColumns, csvHeaders, dbTableColumns, candidateColumns)
-		}
-	} else {
-		// If config.Sync.Columns is not specified, use all columns common to CSV and DB
-		actualSyncColumns = candidateColumns
+	// Step 2: Apply config.Sync.Columns filter if specified
+	actualSyncColumns := filterColumnsByConfig(commonColumns, configSyncColumns)
+	if len(actualSyncColumns) == 0 {
+		return nil, fmt.Errorf("no matching columns after filtering with config.Sync.Columns (%v). Intersection of CSV headers (%v) and DB columns (%v) was (%v), but none of these were in config.Sync.Columns", configSyncColumns, csvHeaders, dbTableColumns, commonColumns)
 	}
 
-	// Ensure primary key is part of the actual sync columns if it's configured
-	if pkName != "" && !slices.Contains(actualSyncColumns, pkName) {
-		// This means the configured PK was not in CSV header, or not in DB, or not in config.Sync.Columns (if specified)
-		return nil, fmt.Errorf("configured primary key '%s' is not among the final actual sync columns: %v. It must be present in CSV header, DB table, and config.Sync.Columns (if specified)", pkName, actualSyncColumns)
+	// Step 3: Validate primary key presence
+	if err := validatePrimaryKeyInColumns(actualSyncColumns, pkName); err != nil {
+		return nil, err
 	}
 
 	return actualSyncColumns, nil
