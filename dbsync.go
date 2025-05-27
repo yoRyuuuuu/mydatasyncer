@@ -144,8 +144,9 @@ func (p *ExecutionPlan) String() string {
 func getTableColumns(ctx context.Context, tx *sql.Tx, tableName string) ([]string, error) {
 	// Query to get column names, specific to MySQL. For other DBs, this might need adjustment.
 	// Using `information_schema.columns` is a standard way.
-	query := fmt.Sprintf("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '%s' ORDER BY ORDINAL_POSITION", tableName)
-	rows, err := tx.QueryContext(ctx, query)
+	// Use parameterized query to prevent SQL injection
+	query := "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION"
+	rows, err := tx.QueryContext(ctx, query, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query columns for table %s: %w", tableName, err)
 	}
