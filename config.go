@@ -119,11 +119,11 @@ func setDefaultsIfNeeded(cfg *Config) {
 
 // ValidateConfig checks if the configuration has all required values
 func ValidateConfig(cfg Config) error {
-	// Note: If Columns are not specified in config, they will be derived from the CSV header.
 	// Check DB configuration
 	if cfg.DB.DSN == "" {
 		return fmt.Errorf("database DSN is required")
 	}
+
 	// Check Sync configuration
 	if cfg.Sync.FilePath == "" {
 		return fmt.Errorf("sync file path is required")
@@ -131,6 +131,7 @@ func ValidateConfig(cfg Config) error {
 	if cfg.Sync.TableName == "" {
 		return fmt.Errorf("table name is required")
 	}
+	// Note: If Columns are not specified in config, they will be derived from the CSV header.
 	if cfg.Sync.SyncMode != "overwrite" && cfg.Sync.SyncMode != "diff" {
 		return fmt.Errorf("sync mode must be either 'overwrite' or 'diff'")
 	}
