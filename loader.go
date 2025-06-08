@@ -13,22 +13,23 @@ type DataRecord map[string]string
 // Loader is the basic interface for data loaders
 type Loader interface {
 	// Load loads data according to specified column definitions
+	// For CSVLoader, the columns argument is ignored and headers are read from the CSV file.
 	Load(columns []string) ([]DataRecord, error)
 }
 
 // CSVLoader loads data from CSV files
 type CSVLoader struct {
-	Delimiter rune   // CSV delimiter character
-	HasHeader bool   // Whether file has a header row
-	FilePath  string // Path to file to be loaded
+	Delimiter rune // CSV delimiter character
+	// HasHeader bool   // Whether file has a header row - For CSV, we now always assume a header
+	FilePath string // Path to file to be loaded
 }
 
 // NewCSVLoader creates a new CSV loader instance
 func NewCSVLoader(filePath string) *CSVLoader {
 	return &CSVLoader{
-		Delimiter: ',',   // Default is comma delimiter
-		HasHeader: false, // Default is no header
-		FilePath:  filePath,
+		Delimiter: ',', // Default is comma delimiter
+		// HasHeader: true, // Default is no header - Now always true for CSV
+		FilePath: filePath,
 	}
 }
 
@@ -38,14 +39,9 @@ func (l *CSVLoader) WithDelimiter(delimiter rune) *CSVLoader {
 	return l
 }
 
-// WithHeader returns a CSV loader with header setting
-func (l *CSVLoader) WithHeader(hasHeader bool) *CSVLoader {
-	l.HasHeader = hasHeader
-	return l
-}
-
-// Load loads data from CSV file
-func (l *CSVLoader) Load(columns []string) ([]DataRecord, error) {
+// Load loads data from CSV file.
+// The 'columns' argument is ignored for CSVLoader; column names are derived from the CSV header.
+func (l *CSVLoader) Load(_ []string) ([]DataRecord, error) {
 	file, err := os.Open(l.FilePath)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open file '%s': %w", l.FilePath, err)
@@ -55,26 +51,31 @@ func (l *CSVLoader) Load(columns []string) ([]DataRecord, error) {
 	reader := csv.NewReader(file)
 	reader.Comma = l.Delimiter
 
-	// Skip header row if applicable
-	if l.HasHeader {
-		_, err = reader.Read()
-		if err != nil {
-			return nil, fmt.Errorf("header row reading error: %w", err)
+	// Read header row
+	headerNames, err := reader.Read()
+	if err != nil {
+		if err == csv.ErrFieldCount || err.Error() == "EOF" { // Check for empty file or just header
+			return nil, fmt.Errorf("CSV file '%s' must contain a header row and at least one data row: %w", l.FilePath, err)
 		}
+		return nil, fmt.Errorf("error reading header row from CSV file '%s': %w", l.FilePath, err)
+	}
+	if len(headerNames) == 0 {
+		return nil, fmt.Errorf("CSV file '%s' header row is empty", l.FilePath)
 	}
 
 	csvRows, err := reader.ReadAll()
 	if err != nil {
-		return nil, fmt.Errorf("CSV data reading error: %w", err)
+		return nil, fmt.Errorf("error reading CSV data rows from '%s': %w", l.FilePath, err)
 	}
 
 	var records []DataRecord
 	for i, row := range csvRows {
-		if len(row) != len(columns) {
-			return nil, fmt.Errorf("line %d: column count (%d) does not match configuration (%d)", i+1, len(row), len(columns))
+		// Line number reported to user should be i+2 because 1 for header, 1 for 0-indexed loop
+		if len(row) != len(headerNames) {
+			return nil, fmt.Errorf("CSV file '%s', line %d: column count (%d) does not match header column count (%d)", l.FilePath, i+2, len(row), len(headerNames))
 		}
 		record := make(DataRecord)
-		for j, colName := range columns {
+		for j, colName := range headerNames {
 			record[colName] = row[j]
 		}
 		records = append(records, record)

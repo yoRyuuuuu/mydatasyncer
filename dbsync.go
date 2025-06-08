@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	// "github.com/pkg/errors" // Removed as per user feedback
 )
 
 // UpdateOperation represents a single update operation with before and after states
@@ -26,9 +27,10 @@ type ExecutionPlan struct {
 	InsertOperations []DataRecord
 	UpdateOperations []UpdateOperation
 	DeleteOperations []DataRecord
-	AffectedColumns  []string
+	AffectedColumns  []string // These will be the columns actually present in both CSV header and DB
 	TimestampColumns []string
-	ImmutableColumns []string // Added for dry-run display
+	ImmutableColumns []string
+	PrimaryKey       string // Added to know which column is PK for display
 }
 
 // String returns a human-readable representation of the execution plan
@@ -138,23 +140,102 @@ func (p *ExecutionPlan) String() string {
 	return buf.String()
 }
 
+// getTableColumns retrieves the column names of a given table
+func getTableColumns(ctx context.Context, tx *sql.Tx, tableName string) ([]string, error) {
+	// Query to get column names, specific to MySQL. For other DBs, this might need adjustment.
+	// Using `information_schema.columns` is a standard way.
+	query := fmt.Sprintf("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '%s' ORDER BY ORDINAL_POSITION", tableName)
+	rows, err := tx.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query columns for table %s: %w", tableName, err)
+	}
+	defer rows.Close()
+
+	var columns []string
+	for rows.Next() {
+		var columnName string
+		if err := rows.Scan(&columnName); err != nil {
+			return nil, fmt.Errorf("failed to scan column name for table %s: %w", tableName, err)
+		}
+		columns = append(columns, columnName)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows for table %s columns: %w", tableName, err)
+	}
+	if len(columns) == 0 {
+		return nil, fmt.Errorf("no columns found for table %s or table does not exist", tableName)
+	}
+	return columns, nil
+}
+
+// determineActualSyncColumns determines the columns to be synced.
+// If configSyncColumns (config.Sync.Columns) is provided, it acts as a filter:
+// actual columns will be the intersection of csvHeaders, dbTableColumns, and configSyncColumns.
+// If configSyncColumns is empty, actual columns will be the intersection of csvHeaders and dbTableColumns.
+func determineActualSyncColumns(csvHeaders []string, dbTableColumns []string, configSyncColumns []string, pkName string) (actualSyncColumns []string, err error) {
+	if len(csvHeaders) == 0 {
+		return nil, fmt.Errorf("CSV header is empty, cannot determine sync columns")
+	}
+
+	candidateColumns := []string{}
+
+	// Step 1: Find intersection of CSV headers and DB table columns
+	for _, csvHeader := range csvHeaders {
+		if slices.Contains(dbTableColumns, csvHeader) { // Case-sensitive match
+			if !slices.Contains(candidateColumns, csvHeader) {
+				candidateColumns = append(candidateColumns, csvHeader)
+			}
+		}
+	}
+
+	if len(candidateColumns) == 0 {
+		return nil, fmt.Errorf("no matching columns found between CSV header (%v) and DB table columns (%v)", csvHeaders, dbTableColumns)
+	}
+
+	// Step 2: If config.Sync.Columns is specified, filter candidateColumns further
+	if len(configSyncColumns) > 0 {
+		filteredColumns := []string{}
+		for _, col := range candidateColumns {
+			if slices.Contains(configSyncColumns, col) {
+				filteredColumns = append(filteredColumns, col)
+			}
+		}
+		actualSyncColumns = filteredColumns
+		if len(actualSyncColumns) == 0 {
+			return nil, fmt.Errorf("no matching columns after filtering with config.Sync.Columns (%v). Intersection of CSV headers (%v) and DB columns (%v) was (%v), but none of these were in config.Sync.Columns", configSyncColumns, csvHeaders, dbTableColumns, candidateColumns)
+		}
+	} else {
+		// If config.Sync.Columns is not specified, use all columns common to CSV and DB
+		actualSyncColumns = candidateColumns
+	}
+
+	// Ensure primary key is part of the actual sync columns if it's configured
+	if pkName != "" && !slices.Contains(actualSyncColumns, pkName) {
+		// This means the configured PK was not in CSV header, or not in DB, or not in config.Sync.Columns (if specified)
+		return nil, fmt.Errorf("configured primary key '%s' is not among the final actual sync columns: %v. It must be present in CSV header, DB table, and config.Sync.Columns (if specified)", pkName, actualSyncColumns)
+	}
+
+	return actualSyncColumns, nil
+}
+
 // generateExecutionPlan creates an execution plan for the sync operation
-func generateExecutionPlan(ctx context.Context, tx *sql.Tx, config Config, fileRecords []DataRecord) (*ExecutionPlan, error) {
+func generateExecutionPlan(ctx context.Context, tx *sql.Tx, config Config, fileRecords []DataRecord, actualSyncCols []string) (*ExecutionPlan, error) {
 	plan := &ExecutionPlan{
 		SyncMode:         config.Sync.SyncMode,
 		TableName:        config.Sync.TableName,
 		FileRecordCount:  len(fileRecords),
-		AffectedColumns:  config.Sync.Columns,
+		AffectedColumns:  actualSyncCols, // Use actual sync columns
 		TimestampColumns: config.Sync.TimestampColumns,
 		ImmutableColumns: config.Sync.ImmutableColumns,
+		PrimaryKey:       config.Sync.PrimaryKey,
 	}
 
 	switch config.Sync.SyncMode {
 	case "overwrite":
 		// For overwrite mode, all records will be deleted and reinserted
-		dbRecords, err := getCurrentDBData(ctx, tx, config)
+		dbRecords, err := getCurrentDBData(ctx, tx, config, actualSyncCols) // Pass actualSyncCols
 		if err != nil {
-			return nil, fmt.Errorf("error getting current DB data: %w", err)
+			return nil, fmt.Errorf("error getting current DB data for overwrite plan: %w", err)
 		}
 		plan.DbRecordCount = len(dbRecords)
 		plan.DeleteOperations = make([]DataRecord, 0, len(dbRecords))
@@ -165,14 +246,21 @@ func generateExecutionPlan(ctx context.Context, tx *sql.Tx, config Config, fileR
 
 	case "diff":
 		// For diff mode, calculate the actual differences
-		dbRecords, err := getCurrentDBData(ctx, tx, config)
+		if config.Sync.PrimaryKey == "" {
+			return nil, fmt.Errorf("primary key is required for diff sync mode but is not configured")
+		}
+		if !slices.Contains(actualSyncCols, config.Sync.PrimaryKey) {
+			return nil, fmt.Errorf("primary key '%s' (from config) is not present in the actual columns to be synced (%v) based on CSV headers and DB schema. Diff mode cannot proceed", config.Sync.PrimaryKey, actualSyncCols)
+		}
+
+		dbRecords, err := getCurrentDBData(ctx, tx, config, actualSyncCols) // Pass actualSyncCols
 		if err != nil {
-			return nil, fmt.Errorf("error getting current DB data: %w", err)
+			return nil, fmt.Errorf("error getting current DB data for diff plan: %w", err)
 		}
 		plan.DbRecordCount = len(dbRecords)
 
 		// Use existing diffData function to calculate differences
-		toInsert, toUpdate, toDelete := diffData(config, fileRecords, dbRecords)
+		toInsert, toUpdate, toDelete := diffData(config, fileRecords, dbRecords, actualSyncCols) // Pass actualSyncCols
 		plan.InsertOperations = toInsert
 		plan.UpdateOperations = toUpdate
 		if config.Sync.DeleteNotInFile {
@@ -188,27 +276,74 @@ func generateExecutionPlan(ctx context.Context, tx *sql.Tx, config Config, fileR
 
 // syncData synchronizes data between file and database
 func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []DataRecord) error {
+	if len(fileRecords) == 0 && config.Sync.SyncMode != "diff" { // For diff mode, empty file might mean delete all
+		log.Println("No records loaded from file. Nothing to sync.")
+		return nil
+	}
+
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("transaction start error: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() // Rollback on error or if commit fails
+
+	// Determine actual columns to sync based on CSV header and DB table schema
+	var actualSyncColumns []string
+	if len(fileRecords) > 0 { // Need at least one record to get headers if not passed differently
+		csvHeaders := make([]string, 0, len(fileRecords[0]))
+		for k := range fileRecords[0] {
+			csvHeaders = append(csvHeaders, k)
+		}
+		slices.Sort(csvHeaders) // Ensure consistent order
+
+		dbTableCols, err := getTableColumns(ctx, tx, config.Sync.TableName)
+		if err != nil {
+			return fmt.Errorf("failed to get database table columns: %w", err)
+		}
+
+		actualSyncColumns, err = determineActualSyncColumns(csvHeaders, dbTableCols, config.Sync.Columns, config.Sync.PrimaryKey)
+		if err != nil {
+			return fmt.Errorf("failed to determine actual columns for synchronization: %w", err)
+		}
+		log.Printf("Actual columns to be synced based on CSV header and DB schema: %v", actualSyncColumns)
+	} else if config.Sync.SyncMode == "diff" && config.Sync.DeleteNotInFile {
+		// Handle case for diff mode where file is empty, meaning all DB records might be deleted.
+		dbTableCols, err := getTableColumns(ctx, tx, config.Sync.TableName)
+		if err != nil {
+			return fmt.Errorf("failed to get database table columns for diff delete: %w", err)
+		}
+		actualSyncColumns = dbTableCols                                 // Fallback to all DB columns for diff-delete-all scenario.
+		if config.Sync.PrimaryKey == "" && len(actualSyncColumns) > 0 { // If PK is not set, we can't do a targeted delete.
+			return fmt.Errorf("primary key must be configured for diff mode with deleteNotInFile when file is empty")
+		}
+		// Ensure PK is in actualSyncColumns if it's a diff-delete scenario
+		if config.Sync.PrimaryKey != "" && !slices.Contains(actualSyncColumns, config.Sync.PrimaryKey) {
+			// This is a safeguard, though getTableColumns should return all columns including PK.
+			// It's more about ensuring the logic considers PK vital here.
+			log.Printf("Warning: For diff-delete-all, primary key '%s' was not explicitly in dbTableCols, this is unexpected. Assuming it's part of the table.", config.Sync.PrimaryKey)
+			// If PK is truly missing from table, getTableColumns would be an issue, or subsequent ops.
+		}
+		log.Printf("File is empty for diff mode with deleteNotInFile. Using all DB columns for potential deletion: %v", actualSyncColumns)
+	} else {
+		log.Println("No records loaded from file, and not in diff mode with deleteNotInFile. Nothing to sync.")
+		return nil
+	}
 
 	// For dry-run mode, generate and display execution plan
 	if config.DryRun {
-		plan, err := generateExecutionPlan(ctx, tx, config, fileRecords)
+		plan, err := generateExecutionPlan(ctx, tx, config, fileRecords, actualSyncColumns) // Pass actualSyncCols
 		if err != nil {
 			return fmt.Errorf("error generating execution plan: %w", err)
 		}
 		log.Print(plan.String())
-		return nil
+		return nil // Dry run ends here
 	}
 
 	switch config.Sync.SyncMode {
 	case "overwrite":
-		err = syncOverwrite(ctx, tx, config, fileRecords)
+		err = syncOverwrite(ctx, tx, config, fileRecords, actualSyncColumns) // Pass actualSyncCols
 	case "diff":
-		err = syncDiff(ctx, tx, config, fileRecords)
+		err = syncDiff(ctx, tx, config, fileRecords, actualSyncColumns) // Pass actualSyncCols
 	default:
 		return fmt.Errorf("unknown sync mode: %s", config.Sync.SyncMode)
 	}
@@ -225,9 +360,8 @@ func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []Data
 }
 
 // syncOverwrite performs complete overwrite synchronization
-func syncOverwrite(ctx context.Context, tx *sql.Tx, config Config, fileRecords []DataRecord) error {
+func syncOverwrite(ctx context.Context, tx *sql.Tx, config Config, fileRecords []DataRecord, actualSyncCols []string) error {
 	// 1. Delete existing data (DELETE)
-	// Note: Using DELETE instead of TRUNCATE to ensure transaction safety
 	_, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", config.Sync.TableName))
 	if err != nil {
 		return fmt.Errorf("error deleting data from table '%s': %w", config.Sync.TableName, err)
@@ -236,62 +370,44 @@ func syncOverwrite(ctx context.Context, tx *sql.Tx, config Config, fileRecords [
 
 	// 2. Insert all file data
 	if len(fileRecords) == 0 {
-		log.Println("No data to insert.")
+		log.Println("No data to insert from file (file was empty or only header).")
 		return nil
 	}
-
-	// Build INSERT statement (using Bulk Insert for efficiency)
-	valueStrings := make([]string, 0, len(fileRecords))
-	valueArgs := make([]any, 0, len(fileRecords)*len(config.Sync.Columns))
-	placeholders := make([]string, len(config.Sync.Columns))
-	for i := range placeholders {
-		placeholders[i] = "?"
-	}
-	placeholderStr := fmt.Sprintf("(%s)", strings.Join(placeholders, ","))
-
-	for _, record := range fileRecords {
-		valueStrings = append(valueStrings, placeholderStr)
-		for _, col := range config.Sync.Columns {
-			valueArgs = append(valueArgs, record[col])
-		}
+	if len(actualSyncCols) == 0 {
+		return fmt.Errorf("no columns determined for sync, cannot insert data")
 	}
 
-	stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s",
-		config.Sync.TableName,
-		strings.Join(config.Sync.Columns, ","),
-		strings.Join(valueStrings, ","))
-
-	_, err = tx.ExecContext(ctx, stmt, valueArgs...)
+	err = bulkInsert(ctx, tx, config, fileRecords, actualSyncCols)
 	if err != nil {
 		return fmt.Errorf("data insertion error: %w", err)
 	}
-	log.Printf("Inserted %d records.", len(fileRecords))
+	log.Printf("Inserted %d records using columns: %v.", len(fileRecords), actualSyncCols)
 
 	return nil
 }
 
 // syncDiff performs differential synchronization
-func syncDiff(ctx context.Context, tx *sql.Tx, config Config, fileRecords []DataRecord) error {
-	// Implementation is more complex
-	// 1. Get current data from DB (primary key and target columns)
-	dbRecords, err := getCurrentDBData(ctx, tx, config)
+func syncDiff(ctx context.Context, tx *sql.Tx, config Config, fileRecords []DataRecord, actualSyncCols []string) error {
+	if config.Sync.PrimaryKey == "" {
+		return fmt.Errorf("primary key is required for diff sync mode")
+	}
+	if !slices.Contains(actualSyncCols, config.Sync.PrimaryKey) {
+		return fmt.Errorf("primary key '%s' is not among the actual sync columns '%v', diff cannot proceed", config.Sync.PrimaryKey, actualSyncCols)
+	}
+
+	// 1. Get current data from DB
+	dbRecords, err := getCurrentDBData(ctx, tx, config, actualSyncCols)
 	if err != nil {
 		return fmt.Errorf("DB data retrieval error: %w", err)
 	}
 
 	// 2. Compare file data with DB data
-	//    - Data only in file -> INSERT target
-	//    - Data only in DB -> DELETE target (if config.Sync.DeleteNotInFile is true)
-	//    - Data in both but different content -> UPDATE target
-	//    - Data in both with same content -> Do nothing
-	toInsert, toUpdate, toDelete := diffData(config, fileRecords, dbRecords)
-
+	toInsert, toUpdate, toDelete := diffData(config, fileRecords, dbRecords, actualSyncCols)
 	log.Printf("Difference detection result: Insert %d, Update %d, Delete %d", len(toInsert), len(toUpdate), len(toDelete))
 
 	// 3. INSERT processing
 	if len(toInsert) > 0 {
-		// Same implementation as in syncOverwrite's INSERT part
-		err = bulkInsert(ctx, tx, config, toInsert)
+		err = bulkInsert(ctx, tx, config, toInsert, actualSyncCols)
 		if err != nil {
 			return fmt.Errorf("INSERT error: %w", err)
 		}
@@ -300,14 +416,11 @@ func syncDiff(ctx context.Context, tx *sql.Tx, config Config, fileRecords []Data
 
 	// 4. UPDATE processing
 	if len(toUpdate) > 0 {
-		// Transform the UpdateOperation slice into a DataRecord slice.
-		// This is necessary because the bulkUpdate function requires a slice of DataRecord as input.
 		updateRecords := make([]DataRecord, len(toUpdate))
-		for i, update := range toUpdate {
-			updateRecords[i] = update.After
+		for i, op := range toUpdate {
+			updateRecords[i] = op.After // Use the 'After' state for update
 		}
-		// Execute individual UPDATEs or try Bulk Update
-		err = bulkUpdate(ctx, tx, config, updateRecords)
+		err = bulkUpdate(ctx, tx, config, updateRecords, actualSyncCols)
 		if err != nil {
 			return fmt.Errorf("UPDATE error: %w", err)
 		}
@@ -316,8 +429,7 @@ func syncDiff(ctx context.Context, tx *sql.Tx, config Config, fileRecords []Data
 
 	// 5. DELETE processing
 	if len(toDelete) > 0 && config.Sync.DeleteNotInFile {
-		// Execute DELETE statement (using IN clause)
-		err = bulkDelete(ctx, tx, config, toDelete)
+		err = bulkDelete(ctx, tx, config, toDelete) // Delete still uses PK from records
 		if err != nil {
 			return fmt.Errorf("DELETE error: %w", err)
 		}
@@ -328,10 +440,30 @@ func syncDiff(ctx context.Context, tx *sql.Tx, config Config, fileRecords []Data
 }
 
 // getCurrentDBData retrieves current data from database (for differential sync)
-func getCurrentDBData(ctx context.Context, tx *sql.Tx, config Config) (map[string]DataRecord, error) {
-	// SELECT <primaryKey>, <columns...> FROM <tableName>
+// It now uses actualSyncCols to determine which columns to SELECT.
+// The Primary Key must be part of actualSyncCols for diff to work.
+func getCurrentDBData(ctx context.Context, tx *sql.Tx, config Config, actualSyncCols []string) (map[string]DataRecord, error) {
+	if len(actualSyncCols) == 0 {
+		return nil, fmt.Errorf("no columns specified to fetch from database")
+	}
+
+	selectCols := slices.Clone(actualSyncCols)
+	// Ensure PK is in selectCols if it's configured and not already present.
+	// This is vital for mapping records.
+	if config.Sync.PrimaryKey != "" && !slices.Contains(selectCols, config.Sync.PrimaryKey) {
+		// This situation implies that the PK configured in yml is not in the CSV header
+		// or not in the DB table, which should have been caught by determineActualSyncColumns.
+		// If determineActualSyncColumns ensures PK is present if it's a valid sync col, this append might be redundant
+		// or indicate a logic gap. For safety, we ensure it's selected if configured.
+		// However, if PK is not in actualSyncCols, it means it wasn't a common column.
+		// This function should only select columns that are in actualSyncCols.
+		// The check for PK presence in actualSyncCols should be done *before* calling this.
+		// So, if PK is not in actualSyncCols here, it's a problem.
+		return nil, fmt.Errorf("primary key '%s' is configured but not in actual sync columns %v; cannot fetch DB data correctly for diff", config.Sync.PrimaryKey, actualSyncCols)
+	}
+
 	query := fmt.Sprintf("SELECT %s FROM %s",
-		strings.Join(append([]string{config.Sync.PrimaryKey}, config.Sync.Columns...), ","), // Include primary key
+		strings.Join(selectCols, ","), // Use selectCols which is a clone of actualSyncCols
 		config.Sync.TableName)
 
 	rows, err := tx.QueryContext(ctx, query)
@@ -389,72 +521,95 @@ func getCurrentDBData(ctx context.Context, tx *sql.Tx, config Config) (map[strin
 }
 
 // diffData compares file data with DB data (for differential sync)
+// It now uses actualSyncCols to determine which columns to compare.
 func diffData(
 	config Config,
 	fileRecords []DataRecord,
 	dbRecords map[string]DataRecord,
+	actualSyncCols []string,
 ) (toInsert []DataRecord, toUpdate []UpdateOperation, toDelete []DataRecord) {
 
 	fileKeys := make(map[string]bool)
+	if config.Sync.PrimaryKey == "" {
+		log.Println("Error: Primary key not configured, cannot perform diff.") // Should be caught earlier
+		return
+	}
 
 	for _, fileRecord := range fileRecords {
-		pkValue := fileRecord[config.Sync.PrimaryKey]
-		if pkValue == "" {
-			log.Printf("Warning: Found record with empty primary key in file. Skipping: %v", fileRecord)
+		pkValue, pkExists := fileRecord[config.Sync.PrimaryKey]
+		if !pkExists || pkValue == "" {
+			log.Printf("Warning: Record in file is missing primary key '%s' value or key itself. Skipping: %v", config.Sync.PrimaryKey, fileRecord)
 			continue
 		}
 		fileKeys[pkValue] = true
 
-		dbRecord, exists := dbRecords[pkValue]
-		if !exists {
-			// Only in file -> Add
+		dbRecord, existsInDB := dbRecords[pkValue]
+		if !existsInDB {
 			toInsert = append(toInsert, fileRecord)
 		} else {
-			// In both -> Compare content
 			isDiff := false
-			for _, col := range config.Sync.Columns {
-				// Check if file and DB values differ (consider type and NULL handling)
-				if fileRecord[col] != dbRecord[col] {
+			// Compare only using actualSyncCols that are not the primary key
+			for _, col := range actualSyncCols {
+				if col == config.Sync.PrimaryKey {
+					continue // Don't compare PK value itself for diff content
+				}
+				// Ensure both records have the column, though they should if actualSyncCols is derived correctly
+				fileVal, fileColExists := fileRecord[col]
+				dbVal, dbColExists := dbRecord[col]
+
+				if !fileColExists && dbColExists { // Column in DB but not in file record for this PK (should not happen if file is consistent)
+					isDiff = true
+					break
+				} else if fileColExists && !dbColExists { // Column in file record but not in DB for this PK (could happen if DB schema changed)
+					isDiff = true
+					break
+				} else if fileColExists && dbColExists && fileVal != dbVal {
 					isDiff = true
 					break
 				}
+				// If neither exists, or both exist and are same, continue
 			}
 			if isDiff {
-				// Content differs -> Update
 				toUpdate = append(toUpdate, UpdateOperation{
 					Before: dbRecord,
 					After:  fileRecord,
 				})
 			}
-			// If content is same, do nothing
 		}
 	}
 
-	// Check for data only in DB -> Delete targets
 	if config.Sync.DeleteNotInFile {
 		for pkValue, dbRecord := range dbRecords {
 			if !fileKeys[pkValue] {
-				toDelete = append(toDelete, dbRecord) // Delete target is DB record
+				toDelete = append(toDelete, dbRecord)
 			}
 		}
 	}
-
 	return
 }
 
-// bulkInsert performs bulk insertion of records
-func bulkInsert(ctx context.Context, tx *sql.Tx, config Config, records []DataRecord) error {
+// bulkInsert performs bulk insertion of records using actualSyncCols
+func bulkInsert(ctx context.Context, tx *sql.Tx, config Config, records []DataRecord, actualSyncCols []string) error {
 	if len(records) == 0 {
 		return nil
 	}
+	if len(actualSyncCols) == 0 {
+		return fmt.Errorf("no columns specified for insert")
+	}
 
-	// Calculate total number of columns (source columns + timestamp columns)
-	totalCols := len(config.Sync.Columns) + len(config.Sync.TimestampColumns)
+	// Columns for INSERT statement are actualSyncCols + timestamp columns not already in actualSyncCols
+	insertStatementCols := slices.Clone(actualSyncCols)
+	activeTimestampCols := []string{} // Timestamp columns that are not part of actualSyncCols but need to be set
+	for _, tsCol := range config.Sync.TimestampColumns {
+		if !slices.Contains(insertStatementCols, tsCol) {
+			insertStatementCols = append(insertStatementCols, tsCol)
+			activeTimestampCols = append(activeTimestampCols, tsCol)
+		}
+	}
 
-	// Prepare placeholders
 	valueStrings := make([]string, 0, len(records))
-	valueArgs := make([]any, 0, len(records)*totalCols)
-	placeholders := make([]string, totalCols)
+	valueArgs := make([]any, 0, len(records)*len(insertStatementCols))
+	placeholders := make([]string, len(insertStatementCols))
 	for i := range placeholders {
 		placeholders[i] = "?"
 	}
@@ -463,61 +618,60 @@ func bulkInsert(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 	now := time.Now()
 	for _, record := range records {
 		valueStrings = append(valueStrings, placeholderStr)
-
-		// Add values from source data
-		for _, col := range config.Sync.Columns {
+		for _, col := range actualSyncCols { // Iterate actualSyncCols for record values
 			valueArgs = append(valueArgs, record[col])
 		}
-
-		// Add current timestamp for all timestamp columns
-		for range config.Sync.TimestampColumns {
+		for range activeTimestampCols { // Add values for the additionally active timestamp columns
 			valueArgs = append(valueArgs, now)
 		}
 	}
 
-	// Prepare column names by concatenating source and timestamp columns
-	columns := slices.Clone(config.Sync.Columns)
-	columns = append(columns, config.Sync.TimestampColumns...)
-
 	stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES %s",
 		config.Sync.TableName,
-		strings.Join(columns, ","),
+		strings.Join(insertStatementCols, ","),
 		strings.Join(valueStrings, ","))
+
 	_, err := tx.ExecContext(ctx, stmt, valueArgs...)
 	return err
 }
 
-// bulkUpdate performs updates for multiple records
-func bulkUpdate(ctx context.Context, tx *sql.Tx, config Config, records []DataRecord) error {
+// bulkUpdate performs updates for multiple records using actualSyncCols
+func bulkUpdate(ctx context.Context, tx *sql.Tx, config Config, records []DataRecord, actualSyncCols []string) error {
 	if len(records) == 0 {
 		return nil
 	}
-	// Simple example: Update one by one (inefficient)
-	// Prepare update columns
-	updateCols := make([]string, 0, len(config.Sync.Columns)+len(config.Sync.TimestampColumns))
+	if config.Sync.PrimaryKey == "" {
+		return fmt.Errorf("primary key not specified for update")
+	}
 
-	// Add columns from source data
-	for _, col := range config.Sync.Columns {
-		// Don't include primary key or immutable columns in SET clause
+	setClauses := []string{}
+	// Determine columns to include in SET clause
+	// These are actualSyncCols excluding PK and immutable columns
+	updateableRecordCols := []string{} // Columns from record to use in SET
+	for _, col := range actualSyncCols {
 		if col != config.Sync.PrimaryKey && !slices.Contains(config.Sync.ImmutableColumns, col) {
-			updateCols = append(updateCols, fmt.Sprintf("%s = ?", col))
+			setClauses = append(setClauses, fmt.Sprintf("%s = ?", col))
+			updateableRecordCols = append(updateableRecordCols, col)
 		}
 	}
 
-	// Add timestamp columns (except immutable ones)
+	activeTimestampSetCols := []string{} // Timestamp columns to SET that are not in actualSyncCols
 	for _, tsCol := range config.Sync.TimestampColumns {
-		if tsCol != config.Sync.PrimaryKey && !slices.Contains(config.Sync.Columns, tsCol) && !slices.Contains(config.Sync.ImmutableColumns, tsCol) {
-			updateCols = append(updateCols, fmt.Sprintf("%s = ?", tsCol))
+		// Add to SET if it's a timestamp column, not immutable, and not already handled via actualSyncCols
+		if !slices.Contains(config.Sync.ImmutableColumns, tsCol) && !slices.Contains(actualSyncCols, tsCol) {
+			setClauses = append(setClauses, fmt.Sprintf("%s = ?", tsCol))
+			activeTimestampSetCols = append(activeTimestampSetCols, tsCol)
 		}
 	}
-	if len(updateCols) == 0 {
-		log.Println("No columns to update (primary key only).")
+
+	if len(setClauses) == 0 {
+		log.Println("No columns to update after excluding primary key and immutable columns.")
 		return nil
 	}
 
 	stmtSQL := fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?",
 		config.Sync.TableName,
-		strings.Join(updateCols, ", "),
+		strings.Join(setClauses, ", "),
 		config.Sync.PrimaryKey)
 
 	stmt, err := tx.PrepareContext(ctx, stmtSQL)
@@ -526,27 +680,19 @@ func bulkUpdate(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 	}
 	defer stmt.Close()
 
+	now := time.Now()
 	for _, record := range records {
-		now := time.Now()
-		args := make([]any, 0, len(config.Sync.Columns)+len(config.Sync.TimestampColumns))
-
-		// Add values from source data
-		for _, col := range config.Sync.Columns {
-			if col != config.Sync.PrimaryKey && !slices.Contains(config.Sync.ImmutableColumns, col) {
-				args = append(args, record[col])
-			}
+		args := make([]any, 0, len(updateableRecordCols)+len(activeTimestampSetCols)+1)
+		for _, col := range updateableRecordCols {
+			args = append(args, record[col])
 		}
-
-		// Add current timestamp for timestamp columns (except immutable ones)
-		for _, tsCol := range config.Sync.TimestampColumns {
-			if tsCol != config.Sync.PrimaryKey && !slices.Contains(config.Sync.Columns, tsCol) && !slices.Contains(config.Sync.ImmutableColumns, tsCol) {
-				args = append(args, now)
-			}
+		for range activeTimestampSetCols {
+			args = append(args, now)
 		}
-		args = append(args, record[config.Sync.PrimaryKey]) // Primary key for WHERE clause
+		args = append(args, record[config.Sync.PrimaryKey]) // PK for WHERE
+
 		_, err = stmt.ExecContext(ctx, args...)
 		if err != nil {
-			// Good to log which record caused the error
 			return fmt.Errorf("UPDATE execution error (PK: %s): %w", record[config.Sync.PrimaryKey], err)
 		}
 	}
@@ -554,6 +700,7 @@ func bulkUpdate(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 }
 
 // bulkDelete performs deletion of multiple records
+// This function does not need actualSyncCols as it only uses the Primary Key.
 func bulkDelete(ctx context.Context, tx *sql.Tx, config Config, records []DataRecord) error {
 	if len(records) == 0 {
 		return nil
