@@ -168,6 +168,28 @@ func TestJSONLoader_Load_Success(t *testing.T) {
 				{"id": "1", "name": "Test", "available": "true", "rating": "4.5"},
 			},
 		},
+		{
+			name: "auto-detect columns (empty columns slice)",
+			jsonContent: `[
+{"id": "1", "name": "Product Alpha", "price": "100.50"},
+{"id": "2", "name": "Product Beta", "price": "25.75"}
+]`,
+			columns: []string{}, // Empty - should auto-detect
+			expected: []DataRecord{
+				{"id": "1", "name": "Product Alpha", "price": "100.50"},
+				{"id": "2", "name": "Product Beta", "price": "25.75"},
+			},
+		},
+		{
+			name: "auto-detect columns with mixed types",
+			jsonContent: `[
+{"name": "Test", "id": 1, "active": true}
+]`,
+			columns: []string{}, // Empty - should auto-detect and sort keys
+			expected: []DataRecord{
+				{"active": "true", "id": "1", "name": "Test"}, // Keys sorted alphabetically
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -218,12 +240,6 @@ func TestJSONLoader_Load_Error(t *testing.T) {
 ]`,
 			columns:       []string{"id", "name"},
 			expectedError: "missing required key 'name'",
-		},
-		{
-			name:          "no columns specified",
-			jsonContent:   `[{"id": "1"}]`,
-			columns:       []string{},
-			expectedError: "JSON loader requires at least one column to be specified",
 		},
 	}
 

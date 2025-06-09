@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -101,12 +102,9 @@ func NewJSONLoader(filePath string) *JSONLoader {
 }
 
 // Load loads data from JSON file.
-// It expects an array of objects, and uses the 'columns' argument to extract specific fields.
+// It expects an array of objects. If 'columns' is empty, it auto-detects all keys from the first object.
+// If 'columns' is specified, it filters to only those columns.
 func (l *JSONLoader) Load(columns []string) ([]DataRecord, error) {
-	if len(columns) == 0 {
-		return nil, fmt.Errorf("JSON loader requires at least one column to be specified")
-	}
-
 	fileData, err := os.ReadFile(l.FilePath)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read JSON file '%s': %w", l.FilePath, err)
@@ -122,10 +120,27 @@ func (l *JSONLoader) Load(columns []string) ([]DataRecord, error) {
 		return nil, fmt.Errorf("error unmarshalling JSON data from '%s': %w", l.FilePath, err)
 	}
 
+	if len(jsonData) == 0 {
+		return nil, nil // Return empty slice for empty JSON array
+	}
+
+	// Auto-detect columns from the first JSON object if not specified
+	var actualColumns []string
+	if len(columns) == 0 {
+		// Get all keys from the first object
+		for key := range jsonData[0] {
+			actualColumns = append(actualColumns, key)
+		}
+		// Sort for consistent ordering
+		sort.Strings(actualColumns)
+	} else {
+		actualColumns = columns
+	}
+
 	var records []DataRecord
 	for i, jsonObj := range jsonData {
 		record := make(DataRecord)
-		for _, colName := range columns {
+		for _, colName := range actualColumns {
 			val, ok := jsonObj[colName]
 			if !ok {
 				return nil, fmt.Errorf("JSON file '%s', record %d: missing required key '%s'", l.FilePath, i, colName)
