@@ -190,6 +190,40 @@ func TestJSONLoader_Load_Success(t *testing.T) {
 				{"active": "true", "id": "1", "name": "Test"}, // Keys sorted alphabetically
 			},
 		},
+		{
+			name: "precise type conversion handling",
+			jsonContent: `[
+{"int_val": 42, "float_val": 3.14159, "bool_true": true, "bool_false": false, "null_val": null, "string_val": "text", "zero_int": 0, "zero_float": 0.0}
+]`,
+			columns: []string{"int_val", "float_val", "bool_true", "bool_false", "null_val", "string_val", "zero_int", "zero_float"},
+			expected: []DataRecord{
+				{
+					"int_val":     "42",        // 整数は小数点なしで表現
+					"float_val":   "3.14159",   // 浮動小数点は適切な精度で表現
+					"bool_true":   "true",      // boolean true
+					"bool_false":  "false",     // boolean false
+					"null_val":    "",          // null は空文字列
+					"string_val":  "text",      // 文字列はそのまま
+					"zero_int":    "0",         // ゼロ整数
+					"zero_float":  "0",         // ゼロ浮動小数点は整数として表現
+				},
+			},
+		},
+		{
+			name: "large numbers and scientific notation",
+			jsonContent: `[
+{"large_int": 9007199254740991, "small_float": 0.000001, "large_float": 123456789.987654321, "negative_val": -42.5}
+]`,
+			columns: []string{"large_int", "small_float", "large_float", "negative_val"},
+			expected: []DataRecord{
+				{
+					"large_int":    "9007199254740991",      // 大きな整数も正確に
+					"small_float":  "0.000001",              // 小さな浮動小数点
+					"large_float":  "123456789.98765433",    // 大きな浮動小数点（float64精度制限）
+					"negative_val": "-42.5",                 // 負の数値
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -354,6 +388,56 @@ func TestGetLoader(t *testing.T) {
 				if reflect.TypeOf(loader) != reflect.TypeOf(tt.expectedType) {
 					t.Errorf("GetLoader() for %s got type %T, want type %T", tt.filePath, loader, tt.expectedType)
 				}
+			}
+		})
+	}
+}
+
+func TestConvertJSONValueToString(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    interface{}
+		expected string
+	}{
+		// Nil value
+		{"nil value", nil, ""},
+		
+		// String values
+		{"string value", "hello", "hello"},
+		{"empty string", "", ""},
+		{"string with spaces", "hello world", "hello world"},
+		
+		// Boolean values
+		{"bool true", true, "true"},
+		{"bool false", false, "false"},
+		
+		// Integer values
+		{"int value", 42, "42"},
+		{"int64 value", int64(123), "123"},
+		{"zero int", 0, "0"},
+		{"negative int", -42, "-42"},
+		
+		// Float values
+		{"float64 whole number", 5.0, "5"},
+		{"float64 decimal", 3.14159, "3.14159"},
+		{"zero float", 0.0, "0"},
+		{"negative float", -2.5, "-2.5"},
+		{"small float", 0.000001, "0.000001"},
+		
+		// Large numbers
+		{"large int", int64(9007199254740991), "9007199254740991"},
+		{"large float", 123456789.987654321, "123456789.98765433"}, // Go float64 precision limit
+		
+		// Edge cases for floats
+		{"float with trailing zeros", 1.2300, "1.23"},
+		{"very small decimal", 1e-10, "0.0000000001"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := convertJSONValueToString(tt.input)
+			if result != tt.expected {
+				t.Errorf("convertJSONValueToString(%v) = %q, want %q", tt.input, result, tt.expected)
 			}
 		})
 	}

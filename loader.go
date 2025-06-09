@@ -9,12 +9,45 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
 // DataRecord represents one record of data loaded from file
 // A map with column names as keys
 type DataRecord map[string]string
+
+// convertJSONValueToString converts JSON values to strings while preserving type information
+// This function handles different JSON types appropriately:
+// - Numbers: converted to strings without scientific notation when possible
+// - Booleans: "true" or "false"
+// - Strings: preserved as-is
+// - null: converted to empty string
+func convertJSONValueToString(val interface{}) string {
+	if val == nil {
+		return ""
+	}
+
+	switch v := val.(type) {
+	case string:
+		return v
+	case bool:
+		return strconv.FormatBool(v)
+	case float64:
+		// Check if it's a whole number to avoid unnecessary decimal places
+		if v == float64(int64(v)) {
+			return strconv.FormatInt(int64(v), 10)
+		}
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case int:
+		return strconv.Itoa(v)
+	default:
+		// Fallback for other types (arrays, objects, etc.)
+		return fmt.Sprintf("%v", v)
+	}
+}
 
 // Loader is the basic interface for data loaders
 type Loader interface {
@@ -145,7 +178,7 @@ func (l *JSONLoader) Load(columns []string) ([]DataRecord, error) {
 			if !ok {
 				return nil, fmt.Errorf("JSON file '%s', record %d: missing required key '%s'", l.FilePath, i, colName)
 			}
-			record[colName] = fmt.Sprintf("%v", val) // Convert value to string
+			record[colName] = convertJSONValueToString(val)
 		}
 		records = append(records, record)
 	}
