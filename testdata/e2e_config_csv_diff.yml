@@ -1,0 +1,15 @@
+dryRun: false
+db:
+  dsn: "user:password@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+sync:
+  filePath: "./testdata/e2e_data_csv_diff.csv"
+  tableName: "test_table"
+  columns:
+    - "id"
+    - "name"
+    - "email"
+  primaryKey: "id"
+  syncMode: "diff"
+  deleteNotInFile: true
+  timestampColumns: []
+  immutableColumns: []
