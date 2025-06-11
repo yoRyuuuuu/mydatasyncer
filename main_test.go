@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"testing"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -27,6 +28,8 @@ const (
 	e2eTestConfigJSONMissingKey    = "testdata/e2e_config_json_missing_key.yml"
 	e2eTestDataJSONInvalidFormat   = "testdata/e2e_data_invalid_format.json"
 	e2eTestConfigJSONInvalidFormat = "testdata/e2e_config_json_invalid_format.yml"
+	e2eTestConfigDataTypes         = "testdata/e2e_config_data_types.yml"
+	e2eTestDataTypes               = "testdata/e2e_data_types.json"
 )
 
 // TestRecord is a helper struct for verifying data in E2E tests
@@ -34,6 +37,23 @@ type TestRecord struct {
 	ID    int
 	Name  string
 	Email string
+}
+
+// DataTypesTestRecord is a helper struct for verifying data type conversion in E2E tests
+type DataTypesTestRecord struct {
+	ID               int
+	StringCol        string
+	BoolTrueCol      bool
+	BoolFalseCol     bool
+	IntCol           int
+	FloatCol         float64
+	LargeIntCol      int64
+	ZeroCol          int
+	NegativeIntCol   int
+	NegativeFloatCol float64
+	WholeNumberFloat float64
+	NullCol          *string
+	RFC3339Time      time.Time
 }
 
 // e2eSetupTestDB connects to the database, drops the test table if it exists, and creates it for E2E tests.
@@ -57,6 +77,43 @@ email VARCHAR(255)
 	_, err = db.Exec(createTableSQL)
 	if err != nil {
 		t.Fatalf("Failed to create test table: %v", err)
+	}
+	return db
+}
+
+// e2eSetupDataTypesTestDB creates a table specifically for data type conversion testing.
+func e2eSetupDataTypesTestDB(t *testing.T) *sql.DB {
+	db, err := sql.Open("mysql", e2eTestDBDSN)
+	if err != nil {
+		t.Fatalf("Failed to connect to database: %v", err)
+	}
+
+	_, err = db.Exec("DROP TABLE IF EXISTS data_types_test")
+	if err != nil {
+		t.Fatalf("Failed to drop data types test table: %v", err)
+	}
+
+	createTableSQL := `
+CREATE TABLE data_types_test (
+	id INT PRIMARY KEY,
+	string_col VARCHAR(255),
+	bool_true_col BOOLEAN,
+	bool_false_col BOOLEAN,
+	int_col INT,
+	float_col DOUBLE,
+	large_int_col BIGINT,
+	zero_col INT,
+	negative_int_col INT,
+	negative_float_col DOUBLE,
+	whole_number_float DOUBLE,
+	null_col VARCHAR(50),
+	rfc3339_time DATETIME,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);`
+	_, err = db.Exec(createTableSQL)
+	if err != nil {
+		t.Fatalf("Failed to create data types test table: %v", err)
 	}
 	return db
 }
@@ -283,4 +340,166 @@ func TestE2ESyncJSON_Error_InvalidFormat(t *testing.T) {
 	if runErr == nil {
 		t.Fatalf("RunApp expected an error due to invalid JSON format, but got nil")
 	}
+}
+
+// e2eTearDownDataTypesTestDB drops the data types test table for E2E tests.
+func e2eTearDownDataTypesTestDB(_ *testing.T, db *sql.DB) {
+	if db == nil {
+		return
+	}
+	_, err := db.Exec("DROP TABLE IF EXISTS data_types_test")
+	if err != nil {
+		// Log error but don't fail the test, as this is cleanup
+		log.Printf("Failed to drop data types test table during teardown: %v", err)
+	}
+	db.Close()
+}
+
+// e2eVerifyDataTypesDBState queries the database and compares the data type conversion records.
+func e2eVerifyDataTypesDBState(t *testing.T, db *sql.DB, expectedRecords []DataTypesTestRecord) {
+	t.Helper()
+	query := `SELECT id, string_col, bool_true_col, bool_false_col, int_col, float_col,
+	          large_int_col, zero_col, negative_int_col, negative_float_col,
+	          whole_number_float, null_col, rfc3339_time
+	          FROM data_types_test ORDER BY id ASC`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		t.Fatalf("Failed to query data from data types test table: %v", err)
+	}
+	defer rows.Close()
+
+	var actualRecords []DataTypesTestRecord
+	for rows.Next() {
+		var r DataTypesTestRecord
+		err := rows.Scan(&r.ID, &r.StringCol, &r.BoolTrueCol, &r.BoolFalseCol,
+			&r.IntCol, &r.FloatCol, &r.LargeIntCol, &r.ZeroCol,
+			&r.NegativeIntCol, &r.NegativeFloatCol, &r.WholeNumberFloat,
+			&r.NullCol, &r.RFC3339Time)
+		if err != nil {
+			t.Fatalf("Failed to scan row: %v", err)
+		}
+		actualRecords = append(actualRecords, r)
+	}
+
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Error during rows iteration: %v", err)
+	}
+
+	if len(actualRecords) != len(expectedRecords) {
+		t.Fatalf("Expected %d records, but got %d. Actual: %+v", len(expectedRecords), len(actualRecords), actualRecords)
+	}
+
+	for i, expected := range expectedRecords {
+		actual := actualRecords[i]
+		if actual.ID != expected.ID {
+			t.Errorf("ID mismatch at index %d. Expected: %d, Got: %d", i, expected.ID, actual.ID)
+		}
+		if actual.StringCol != expected.StringCol {
+			t.Errorf("StringCol mismatch at index %d. Expected: '%s', Got: '%s'", i, expected.StringCol, actual.StringCol)
+		}
+		if actual.BoolTrueCol != expected.BoolTrueCol {
+			t.Errorf("BoolTrueCol mismatch at index %d. Expected: %t, Got: %t", i, expected.BoolTrueCol, actual.BoolTrueCol)
+		}
+		if actual.BoolFalseCol != expected.BoolFalseCol {
+			t.Errorf("BoolFalseCol mismatch at index %d. Expected: %t, Got: %t", i, expected.BoolFalseCol, actual.BoolFalseCol)
+		}
+		if actual.IntCol != expected.IntCol {
+			t.Errorf("IntCol mismatch at index %d. Expected: %d, Got: %d", i, expected.IntCol, actual.IntCol)
+		}
+		if actual.FloatCol != expected.FloatCol {
+			t.Errorf("FloatCol mismatch at index %d. Expected: %f, Got: %f", i, expected.FloatCol, actual.FloatCol)
+		}
+		if actual.LargeIntCol != expected.LargeIntCol {
+			t.Errorf("LargeIntCol mismatch at index %d. Expected: %d, Got: %d", i, expected.LargeIntCol, actual.LargeIntCol)
+		}
+		if actual.ZeroCol != expected.ZeroCol {
+			t.Errorf("ZeroCol mismatch at index %d. Expected: %d, Got: %d", i, expected.ZeroCol, actual.ZeroCol)
+		}
+		if actual.NegativeIntCol != expected.NegativeIntCol {
+			t.Errorf("NegativeIntCol mismatch at index %d. Expected: %d, Got: %d", i, expected.NegativeIntCol, actual.NegativeIntCol)
+		}
+		if actual.NegativeFloatCol != expected.NegativeFloatCol {
+			t.Errorf("NegativeFloatCol mismatch at index %d. Expected: %f, Got: %f", i, expected.NegativeFloatCol, actual.NegativeFloatCol)
+		}
+		if actual.WholeNumberFloat != expected.WholeNumberFloat {
+			t.Errorf("WholeNumberFloat mismatch at index %d. Expected: %f, Got: %f", i, expected.WholeNumberFloat, actual.WholeNumberFloat)
+		}
+		if (actual.NullCol == nil) != (expected.NullCol == nil) || (actual.NullCol != nil && expected.NullCol != nil && *actual.NullCol != *expected.NullCol) {
+			actualStr := "nil"
+			expectedStr := "nil"
+			if actual.NullCol != nil {
+				actualStr = *actual.NullCol
+			}
+			if expected.NullCol != nil {
+				expectedStr = *expected.NullCol
+			}
+			t.Errorf("NullCol mismatch at index %d. Expected: %s, Got: %s", i, expectedStr, actualStr)
+		}
+		if !actual.RFC3339Time.Equal(expected.RFC3339Time) {
+			t.Errorf("RFC3339Time mismatch at index %d. Expected: %s, Got: %s", i, expected.RFC3339Time, actual.RFC3339Time)
+		}
+	}
+}
+
+func TestE2ESyncJSON_DataTypes(t *testing.T) {
+	checkTestFileExists(t, e2eTestConfigDataTypes)
+	checkTestFileExists(t, e2eTestDataTypes)
+
+	db := e2eSetupDataTypesTestDB(t)
+	defer e2eTearDownDataTypesTestDB(t, db)
+
+	err := RunApp(e2eTestConfigDataTypes, false)
+	if err != nil {
+		t.Fatalf("RunApp with data types JSON failed: %v", err)
+	}
+
+	expectedRecords := []DataTypesTestRecord{
+		{
+			ID:               1,
+			StringCol:        "Hello World",
+			BoolTrueCol:      true,
+			BoolFalseCol:     false,
+			IntCol:           42,
+			FloatCol:         3.14159,
+			LargeIntCol:      9007199254740000,
+			ZeroCol:          0,
+			NegativeIntCol:   -123,
+			NegativeFloatCol: -99.99,
+			WholeNumberFloat: 100,
+			NullCol:          nil,
+			RFC3339Time:      time.Date(2023, 12, 25, 15, 30, 45, 0, time.FixedZone("+09:00", 9*3600)),
+		},
+		{
+			ID:               2,
+			StringCol:        "JSON Test",
+			BoolTrueCol:      false,
+			BoolFalseCol:     true,
+			IntCol:           0,
+			FloatCol:         0.001,
+			LargeIntCol:      1,
+			ZeroCol:          999,
+			NegativeIntCol:   -1,
+			NegativeFloatCol: -0.5,
+			WholeNumberFloat: 42,
+			NullCol:          nil,
+			RFC3339Time:      time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			ID:               3,
+			StringCol:        "",
+			BoolTrueCol:      true,
+			BoolFalseCol:     false,
+			IntCol:           2147483647,
+			FloatCol:         1.7976931348623157e+308,
+			LargeIntCol:      -9007199254740000,
+			ZeroCol:          0,
+			NegativeIntCol:   -2147483648,
+			NegativeFloatCol: -1.7976931348623157e+308,
+			WholeNumberFloat: 0,
+			NullCol:          nil,
+			RFC3339Time:      time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
+	}
+	e2eVerifyDataTypesDBState(t, db, expectedRecords)
 }

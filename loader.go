@@ -9,13 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
+	"time"
 )
 
 // DataRecord represents one record of data loaded from file
 // A map with column names as keys
-type DataRecord map[string]string
+type DataRecord map[string]any
 
 // convertJSONValueToString converts JSON values to strings while preserving type information
 // This function handles different JSON types appropriately:
@@ -23,30 +23,22 @@ type DataRecord map[string]string
 // - Booleans: "true" or "false"
 // - Strings: preserved as-is
 // - null: converted to empty string
-func convertJSONValueToString(val interface{}) string {
+// convertValue converts JSON values to appropriate Go types
+func convertValue(val any) any {
 	if val == nil {
-		return ""
+		return nil
 	}
 
-	switch v := val.(type) {
-	case string:
-		return v
-	case bool:
-		return strconv.FormatBool(v)
-	case float64:
-		// Check if it's a whole number to avoid unnecessary decimal places
-		if v == float64(int64(v)) {
-			return strconv.FormatInt(int64(v), 10)
+	// Try to convert string values that look like RFC3339 timestamps to time.Time
+	if str, ok := val.(string); ok {
+		if t, err := time.Parse(time.RFC3339, str); err == nil {
+			return t
 		}
-		return strconv.FormatFloat(v, 'f', -1, 64)
-	case int64:
-		return strconv.FormatInt(v, 10)
-	case int:
-		return strconv.Itoa(v)
-	default:
-		// Fallback for other types (arrays, objects, etc.)
-		return fmt.Sprintf("%v", v)
+		return str
 	}
+
+	// Return other types as-is
+	return val
 }
 
 // Loader is the basic interface for data loaders
@@ -115,7 +107,7 @@ func (l *CSVLoader) Load(_ []string) ([]DataRecord, error) {
 		}
 		record := make(DataRecord)
 		for j, colName := range headerNames {
-			record[colName] = row[j]
+			record[colName] = convertValue(row[j])
 		}
 		records = append(records, record)
 	}
@@ -147,7 +139,7 @@ func (l *JSONLoader) Load(columns []string) ([]DataRecord, error) {
 		return nil, fmt.Errorf("JSON file '%s' is empty", l.FilePath)
 	}
 
-	var jsonData []map[string]interface{}
+	var jsonData []map[string]any
 	err = json.Unmarshal(fileData, &jsonData)
 	if err != nil {
 		return nil, fmt.Errorf("error unmarshalling JSON data from '%s': %w", l.FilePath, err)
@@ -178,7 +170,7 @@ func (l *JSONLoader) Load(columns []string) ([]DataRecord, error) {
 			if !ok {
 				return nil, fmt.Errorf("JSON file '%s', record %d: missing required key '%s'", l.FilePath, i, colName)
 			}
-			record[colName] = convertJSONValueToString(val)
+			record[colName] = convertValue(val)
 		}
 		records = append(records, record)
 	}
