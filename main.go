@@ -100,6 +100,9 @@ func RunApp(configPath string, dryRun bool) error {
 
 // loadDataFromFile loads data from file using the integrated loader functionality
 func loadDataFromFile(config *Config) ([]DataRecord, error) {
-	dataLoader := GetLoader(config.Sync.FilePath)
+	dataLoader, err := GetLoader(config.Sync.FilePath)
+	if err != nil {
+		return nil, fmt.Errorf("error creating loader for %s: %w", config.Sync.FilePath, err)
+	}
 	return dataLoader.Load(config.Sync.Columns)
 }

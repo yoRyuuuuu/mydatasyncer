@@ -1,0 +1,8 @@
+db:
+  dsn: "user:password@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+sync:
+  filePath: "testdata/e2e_data_invalid_format.json"
+  tableName: "test_table"
+  columns: ["id", "name", "email"]
+  primaryKey: "id"
+  syncMode: "overwrite"
