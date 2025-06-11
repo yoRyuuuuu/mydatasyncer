@@ -631,7 +631,7 @@ func diffData(
 			log.Printf("Warning: Record in file is missing primary key '%s' value or key itself. Skipping: %v", config.Sync.PrimaryKey, fileRecord)
 			continue
 		}
-		pkValueStr := fmt.Sprintf("%v", pkValue)
+		pkValueStr := convertValueToString(pkValue)
 		if pkValueStr == "" {
 			log.Printf("Warning: Record in file has empty primary key '%s' value. Skipping: %v", config.Sync.PrimaryKey, fileRecord)
 			continue
