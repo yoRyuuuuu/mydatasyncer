@@ -638,6 +638,85 @@ func getCurrentDBData(ctx context.Context, tx *sql.Tx, config Config, actualSync
 	return dbData, nil
 }
 
+// extractPrimaryKeyValue extracts and validates primary key value from a record
+func extractPrimaryKeyValue(record DataRecord, primaryKey string) (string, bool) {
+	pkValue, pkExists := record[primaryKey]
+	if !pkExists || pkValue == nil {
+		return "", false
+	}
+	pkValueStr := convertValueToString(pkValue)
+	if pkValueStr == "" {
+		return "", false
+	}
+	return pkValueStr, true
+}
+
+// compareRecords compares two records and returns true if they differ
+func compareRecords(fileRecord, dbRecord DataRecord, actualSyncCols []string, primaryKey string) bool {
+	for _, col := range actualSyncCols {
+		if col == primaryKey {
+			continue // Don't compare PK value itself for diff content
+		}
+		fileVal, fileColExists := fileRecord[col]
+		dbVal, dbColExists := dbRecord[col]
+
+		if !fileColExists && dbColExists {
+			return true
+		} else if fileColExists && !dbColExists {
+			return true
+		} else if fileColExists && dbColExists {
+			fileStr := convertValueToString(fileVal)
+			if fileStr != dbVal {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// processFileRecords processes file records and determines insert/update operations
+func processFileRecords(fileRecords []DataRecord, dbRecords map[string]DataRecord, config Config, actualSyncCols []string) ([]DataRecord, []UpdateOperation, map[string]bool) {
+	var toInsert []DataRecord
+	var toUpdate []UpdateOperation
+	fileKeys := make(map[string]bool)
+
+	for _, fileRecord := range fileRecords {
+		pkValueStr, isValid := extractPrimaryKeyValue(fileRecord, config.Sync.PrimaryKey)
+		if !isValid {
+			log.Printf("Warning: Record in file is missing primary key '%s' value or key itself. Skipping: %v", config.Sync.PrimaryKey, fileRecord)
+			continue
+		}
+		fileKeys[pkValueStr] = true
+
+		dbRecord, existsInDB := dbRecords[pkValueStr]
+		if !existsInDB {
+			toInsert = append(toInsert, fileRecord)
+		} else if compareRecords(fileRecord, dbRecord, actualSyncCols, config.Sync.PrimaryKey) {
+			toUpdate = append(toUpdate, UpdateOperation{
+				Before: dbRecord,
+				After:  fileRecord,
+			})
+		}
+	}
+
+	return toInsert, toUpdate, fileKeys
+}
+
+// findRecordsToDelete identifies records that need to be deleted
+func findRecordsToDelete(dbRecords map[string]DataRecord, fileKeys map[string]bool, deleteNotInFile bool) []DataRecord {
+	if !deleteNotInFile {
+		return nil
+	}
+
+	var toDelete []DataRecord
+	for pkValue, dbRecord := range dbRecords {
+		if !fileKeys[pkValue] {
+			toDelete = append(toDelete, dbRecord)
+		}
+	}
+	return toDelete
+}
+
 // diffData compares file data with DB data (for differential sync)
 // It now uses actualSyncCols to determine which columns to compare.
 func diffData(
@@ -647,72 +726,17 @@ func diffData(
 	actualSyncCols []string,
 ) (toInsert []DataRecord, toUpdate []UpdateOperation, toDelete []DataRecord) {
 
-	fileKeys := make(map[string]bool)
-
 	if config.Sync.PrimaryKey == "" {
 		log.Println("Error: Primary key not configured, cannot perform diff.") // Should be caught earlier
 		return
 	}
 
-	for _, fileRecord := range fileRecords {
-		pkValue, pkExists := fileRecord[config.Sync.PrimaryKey]
-		if !pkExists || pkValue == nil {
-			log.Printf("Warning: Record in file is missing primary key '%s' value or key itself. Skipping: %v", config.Sync.PrimaryKey, fileRecord)
-			continue
-		}
-		pkValueStr := convertValueToString(pkValue)
-		if pkValueStr == "" {
-			log.Printf("Warning: Record in file has empty primary key '%s' value. Skipping: %v", config.Sync.PrimaryKey, fileRecord)
-			continue
-		}
-		fileKeys[pkValueStr] = true
+	// Process file records to determine insert/update operations
+	toInsert, toUpdate, fileKeys := processFileRecords(fileRecords, dbRecords, config, actualSyncCols)
 
-		dbRecord, existsInDB := dbRecords[pkValueStr]
-		if !existsInDB {
-			toInsert = append(toInsert, fileRecord)
-		} else {
-			isDiff := false
-			// Compare only using actualSyncCols that are not the primary key
-			for _, col := range actualSyncCols {
-				if col == config.Sync.PrimaryKey {
-					continue // Don't compare PK value itself for diff content
-				}
-				// Ensure both records have the column, though they should if actualSyncCols is derived correctly
-				fileVal, fileColExists := fileRecord[col]
-				dbVal, dbColExists := dbRecord[col]
+	// Identify records to delete
+	toDelete = findRecordsToDelete(dbRecords, fileKeys, config.Sync.DeleteNotInFile)
 
-				if !fileColExists && dbColExists { // Column in DB but not in file record for this PK (should not happen if file is consistent)
-					isDiff = true
-					break
-				} else if fileColExists && !dbColExists { // Column in file record but not in DB for this PK (could happen if DB schema changed)
-					isDiff = true
-					break
-				} else if fileColExists && dbColExists {
-					// Convert fileVal to string for comparison with dbVal
-					fileStr := convertValueToString(fileVal)
-					if fileStr != dbVal {
-						isDiff = true
-						break
-					}
-				}
-				// If neither exists, or both exist and are same, continue
-			}
-			if isDiff {
-				toUpdate = append(toUpdate, UpdateOperation{
-					Before: dbRecord,
-					After:  fileRecord,
-				})
-			}
-		}
-	}
-
-	if config.Sync.DeleteNotInFile {
-		for pkValue, dbRecord := range dbRecords {
-			if !fileKeys[pkValue] {
-				toDelete = append(toDelete, dbRecord)
-			}
-		}
-	}
 	return
 }
 
