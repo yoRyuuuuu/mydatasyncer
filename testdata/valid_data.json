@@ -1,0 +1,20 @@
+[
+  {
+    "id": "1",
+    "name": "Product Alpha",
+    "price": "100.50",
+    "stock": "10"
+  },
+  {
+    "id": "2",
+    "name": "Product Beta",
+    "price": "25.75",
+    "stock": "50"
+  },
+  {
+    "id": "3",
+    "name": "Product Gamma",
+    "price": "300.00",
+    "stock": "5"
+  }
+]

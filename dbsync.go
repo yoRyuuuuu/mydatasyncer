@@ -144,8 +144,9 @@ func (p *ExecutionPlan) String() string {
 func getTableColumns(ctx context.Context, tx *sql.Tx, tableName string) ([]string, error) {
 	// Query to get column names, specific to MySQL. For other DBs, this might need adjustment.
 	// Using `information_schema.columns` is a standard way.
-	query := fmt.Sprintf("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '%s' ORDER BY ORDINAL_POSITION", tableName)
-	rows, err := tx.QueryContext(ctx, query)
+	// Use parameterized query to prevent SQL injection
+	query := "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION"
+	rows, err := tx.QueryContext(ctx, query, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query columns for table %s: %w", tableName, err)
 	}
@@ -168,51 +169,66 @@ func getTableColumns(ctx context.Context, tx *sql.Tx, tableName string) ([]strin
 	return columns, nil
 }
 
+// findCommonColumns returns the intersection of CSV headers and DB table columns
+func findCommonColumns(csvHeaders []string, dbTableColumns []string) []string {
+	var commonColumns []string
+	for _, csvHeader := range csvHeaders {
+		if slices.Contains(dbTableColumns, csvHeader) {
+			if !slices.Contains(commonColumns, csvHeader) {
+				commonColumns = append(commonColumns, csvHeader)
+			}
+		}
+	}
+	return commonColumns
+}
+
+// filterColumnsByConfig filters common columns using the config.Sync.Columns specification
+func filterColumnsByConfig(commonColumns []string, configSyncColumns []string) []string {
+	if len(configSyncColumns) == 0 {
+		return commonColumns
+	}
+
+	var filteredColumns []string
+	for _, col := range commonColumns {
+		if slices.Contains(configSyncColumns, col) {
+			filteredColumns = append(filteredColumns, col)
+		}
+	}
+	return filteredColumns
+}
+
+// validatePrimaryKeyInColumns ensures the primary key is included in the sync columns
+func validatePrimaryKeyInColumns(actualSyncColumns []string, pkName string) error {
+	if pkName != "" && !slices.Contains(actualSyncColumns, pkName) {
+		return fmt.Errorf("configured primary key '%s' is not among the final actual sync columns: %v. It must be present in CSV header, DB table, and config.Sync.Columns (if specified)", pkName, actualSyncColumns)
+	}
+	return nil
+}
+
 // determineActualSyncColumns determines the columns to be synced.
 // If configSyncColumns (config.Sync.Columns) is provided, it acts as a filter:
 // actual columns will be the intersection of csvHeaders, dbTableColumns, and configSyncColumns.
 // If configSyncColumns is empty, actual columns will be the intersection of csvHeaders and dbTableColumns.
-func determineActualSyncColumns(csvHeaders []string, dbTableColumns []string, configSyncColumns []string, pkName string) (actualSyncColumns []string, err error) {
+func determineActualSyncColumns(csvHeaders []string, dbTableColumns []string, configSyncColumns []string, pkName string) ([]string, error) {
 	if len(csvHeaders) == 0 {
 		return nil, fmt.Errorf("CSV header is empty, cannot determine sync columns")
 	}
 
-	candidateColumns := []string{}
-
 	// Step 1: Find intersection of CSV headers and DB table columns
-	for _, csvHeader := range csvHeaders {
-		if slices.Contains(dbTableColumns, csvHeader) { // Case-sensitive match
-			if !slices.Contains(candidateColumns, csvHeader) {
-				candidateColumns = append(candidateColumns, csvHeader)
-			}
-		}
-	}
-
-	if len(candidateColumns) == 0 {
+	commonColumns := findCommonColumns(csvHeaders, dbTableColumns)
+	if len(commonColumns) == 0 {
 		return nil, fmt.Errorf("no matching columns found between CSV header (%v) and DB table columns (%v)", csvHeaders, dbTableColumns)
 	}
 
-	// Step 2: If config.Sync.Columns is specified, filter candidateColumns further
-	if len(configSyncColumns) > 0 {
-		filteredColumns := []string{}
-		for _, col := range candidateColumns {
-			if slices.Contains(configSyncColumns, col) {
-				filteredColumns = append(filteredColumns, col)
-			}
-		}
-		actualSyncColumns = filteredColumns
-		if len(actualSyncColumns) == 0 {
-			return nil, fmt.Errorf("no matching columns after filtering with config.Sync.Columns (%v). Intersection of CSV headers (%v) and DB columns (%v) was (%v), but none of these were in config.Sync.Columns", configSyncColumns, csvHeaders, dbTableColumns, candidateColumns)
-		}
-	} else {
-		// If config.Sync.Columns is not specified, use all columns common to CSV and DB
-		actualSyncColumns = candidateColumns
+	// Step 2: Apply config.Sync.Columns filter if specified
+	actualSyncColumns := filterColumnsByConfig(commonColumns, configSyncColumns)
+	if len(actualSyncColumns) == 0 {
+		return nil, fmt.Errorf("no matching columns after filtering with config.Sync.Columns (%v). Intersection of CSV headers (%v) and DB columns (%v) was (%v), but none of these were in config.Sync.Columns", configSyncColumns, csvHeaders, dbTableColumns, commonColumns)
 	}
 
-	// Ensure primary key is part of the actual sync columns if it's configured
-	if pkName != "" && !slices.Contains(actualSyncColumns, pkName) {
-		// This means the configured PK was not in CSV header, or not in DB, or not in config.Sync.Columns (if specified)
-		return nil, fmt.Errorf("configured primary key '%s' is not among the final actual sync columns: %v. It must be present in CSV header, DB table, and config.Sync.Columns (if specified)", pkName, actualSyncColumns)
+	// Step 3: Validate primary key presence
+	if err := validatePrimaryKeyInColumns(actualSyncColumns, pkName); err != nil {
+		return nil, err
 	}
 
 	return actualSyncColumns, nil
@@ -276,9 +292,18 @@ func generateExecutionPlan(ctx context.Context, tx *sql.Tx, config Config, fileR
 
 // syncData synchronizes data between file and database
 func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []DataRecord) error {
-	if len(fileRecords) == 0 && config.Sync.SyncMode != "diff" { // For diff mode, empty file might mean delete all
-		log.Println("No records loaded from file. Nothing to sync.")
-		return nil
+	// Early return only for diff mode without deleteNotInFile
+	if len(fileRecords) == 0 {
+		if config.Sync.SyncMode == "diff" && !config.Sync.DeleteNotInFile {
+			log.Println("No records loaded from file. Nothing to sync.")
+			return nil
+		}
+		// Log the intention for overwrite or diff+deleteNotInFile modes
+		if config.Sync.SyncMode == "overwrite" {
+			log.Println("File is empty. In overwrite mode, all existing data will be deleted.")
+		} else if config.Sync.SyncMode == "diff" && config.Sync.DeleteNotInFile {
+			log.Println("File is empty. In diff mode with deleteNotInFile, all existing data may be deleted.")
+		}
 	}
 
 	tx, err := db.BeginTx(ctx, nil)
@@ -287,47 +312,40 @@ func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []Data
 	}
 	defer tx.Rollback() // Rollback on error or if commit fails
 
-	// Determine actual columns to sync based on CSV header and DB table schema
+	// Determine actual columns to sync
 	var actualSyncColumns []string
-	if len(fileRecords) > 0 { // Need at least one record to get headers if not passed differently
-		csvHeaders := make([]string, 0, len(fileRecords[0]))
+	if len(fileRecords) > 0 {
+		// Normal case: get headers from file records
+		fileHeaders := make([]string, 0, len(fileRecords[0]))
 		for k := range fileRecords[0] {
-			csvHeaders = append(csvHeaders, k)
+			fileHeaders = append(fileHeaders, k)
 		}
-		slices.Sort(csvHeaders) // Ensure consistent order
+		slices.Sort(fileHeaders) // Ensure consistent order
 
 		dbTableCols, err := getTableColumns(ctx, tx, config.Sync.TableName)
 		if err != nil {
 			return fmt.Errorf("failed to get database table columns: %w", err)
 		}
 
-		actualSyncColumns, err = determineActualSyncColumns(csvHeaders, dbTableCols, config.Sync.Columns, config.Sync.PrimaryKey)
+		actualSyncColumns, err = determineActualSyncColumns(fileHeaders, dbTableCols, config.Sync.Columns, config.Sync.PrimaryKey)
 		if err != nil {
 			return fmt.Errorf("failed to determine actual columns for synchronization: %w", err)
 		}
-		log.Printf("Actual columns to be synced based on CSV header and DB schema: %v", actualSyncColumns)
-	} else if config.Sync.SyncMode == "diff" && config.Sync.DeleteNotInFile {
-		// Handle case for diff mode where file is empty, meaning all DB records might be deleted.
+	} else {
+		// Empty file case: use all DB columns for overwrite or diff+deleteNotInFile
 		dbTableCols, err := getTableColumns(ctx, tx, config.Sync.TableName)
 		if err != nil {
-			return fmt.Errorf("failed to get database table columns for diff delete: %w", err)
+			return fmt.Errorf("failed to get database table columns: %w", err)
 		}
-		actualSyncColumns = dbTableCols                                 // Fallback to all DB columns for diff-delete-all scenario.
-		if config.Sync.PrimaryKey == "" && len(actualSyncColumns) > 0 { // If PK is not set, we can't do a targeted delete.
+		actualSyncColumns = dbTableCols
+
+		// Primary key validation for diff mode
+		if config.Sync.SyncMode == "diff" && config.Sync.PrimaryKey == "" {
 			return fmt.Errorf("primary key must be configured for diff mode with deleteNotInFile when file is empty")
 		}
-		// Ensure PK is in actualSyncColumns if it's a diff-delete scenario
-		if config.Sync.PrimaryKey != "" && !slices.Contains(actualSyncColumns, config.Sync.PrimaryKey) {
-			// This is a safeguard, though getTableColumns should return all columns including PK.
-			// It's more about ensuring the logic considers PK vital here.
-			log.Printf("Warning: For diff-delete-all, primary key '%s' was not explicitly in dbTableCols, this is unexpected. Assuming it's part of the table.", config.Sync.PrimaryKey)
-			// If PK is truly missing from table, getTableColumns would be an issue, or subsequent ops.
-		}
-		log.Printf("File is empty for diff mode with deleteNotInFile. Using all DB columns for potential deletion: %v", actualSyncColumns)
-	} else {
-		log.Println("No records loaded from file, and not in diff mode with deleteNotInFile. Nothing to sync.")
-		return nil
 	}
+
+	log.Printf("Actual columns to be synced: %v", actualSyncColumns)
 
 	// For dry-run mode, generate and display execution plan
 	if config.DryRun {
