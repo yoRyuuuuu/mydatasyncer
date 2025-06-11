@@ -555,13 +555,18 @@ func diffData(
 
 	for _, fileRecord := range fileRecords {
 		pkValue, pkExists := fileRecord[config.Sync.PrimaryKey]
-		if !pkExists || pkValue == "" {
+		if !pkExists || pkValue == nil {
 			log.Printf("Warning: Record in file is missing primary key '%s' value or key itself. Skipping: %v", config.Sync.PrimaryKey, fileRecord)
 			continue
 		}
-		fileKeys[pkValue] = true
+		pkValueStr := fmt.Sprintf("%v", pkValue)
+		if pkValueStr == "" {
+			log.Printf("Warning: Record in file has empty primary key '%s' value. Skipping: %v", config.Sync.PrimaryKey, fileRecord)
+			continue
+		}
+		fileKeys[pkValueStr] = true
 
-		dbRecord, existsInDB := dbRecords[pkValue]
+		dbRecord, existsInDB := dbRecords[pkValueStr]
 		if !existsInDB {
 			toInsert = append(toInsert, fileRecord)
 		} else {
@@ -581,7 +586,7 @@ func diffData(
 				} else if fileColExists && !dbColExists { // Column in file record but not in DB for this PK (could happen if DB schema changed)
 					isDiff = true
 					break
-				} else if fileColExists && dbColExists && fileVal != dbVal {
+				} else if fileColExists && dbColExists && fmt.Sprintf("%v", fileVal) != dbVal {
 					isDiff = true
 					break
 				}
