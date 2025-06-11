@@ -1,0 +1,47 @@
+[
+  {
+    "id": 1,
+    "string_col": "Hello World",
+    "bool_true_col": true,
+    "bool_false_col": false,
+    "int_col": 42,
+    "float_col": 3.14159,
+    "large_int_col": 9223372036854775000,
+    "zero_col": 0,
+    "negative_int_col": -123,
+    "negative_float_col": -99.99,
+    "whole_number_float": 100.0,
+    "null_col": null,
+    "rfc3339_time": "2023-12-25T15:30:45+09:00"
+  },
+  {
+    "id": 2,
+    "string_col": "JSON Test",
+    "bool_true_col": false,
+    "bool_false_col": true,
+    "int_col": 0,
+    "float_col": 0.001,
+    "large_int_col": 1,
+    "zero_col": 999,
+    "negative_int_col": -1,
+    "negative_float_col": -0.5,
+    "whole_number_float": 42.0,
+    "null_col": null,
+    "rfc3339_time": "2024-01-01T00:00:00Z"
+  },
+  {
+    "id": 3,
+    "string_col": "",
+    "bool_true_col": true,
+    "bool_false_col": false,
+    "int_col": 2147483647,
+    "float_col": 1.7976931348623157e+308,
+    "large_int_col": -9223372036854775000,
+    "zero_col": 0,
+    "negative_int_col": -2147483648,
+    "negative_float_col": -1.7976931348623157e+308,
+    "whole_number_float": 0.0,
+    "null_col": null,
+    "rfc3339_time": "1970-01-01T00:00:00Z"
+  }
+]
