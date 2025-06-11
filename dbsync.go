@@ -90,6 +90,13 @@ type UpdateOperation struct {
 	After  DataRecord
 }
 
+// DiffOperations represents the operations to be performed during differential synchronization
+type DiffOperations struct {
+	ToInsert []DataRecord
+	ToUpdate []UpdateOperation
+	ToDelete []DataRecord
+}
+
 // ExecutionPlan represents the planned operations for data synchronization
 type ExecutionPlan struct {
 	SyncMode         string
@@ -476,57 +483,78 @@ func syncOverwrite(ctx context.Context, tx *sql.Tx, config Config, fileRecords [
 	return nil
 }
 
-// syncDiff performs differential synchronization
-func syncDiff(ctx context.Context, tx *sql.Tx, config Config, fileRecords []DataRecord, actualSyncCols []string) error {
+// validateDiffSyncRequirements validates the requirements for differential synchronization
+func validateDiffSyncRequirements(config Config, actualSyncCols []string) error {
 	if config.Sync.PrimaryKey == "" {
 		return fmt.Errorf("primary key is required for diff sync mode")
 	}
 	if !slices.Contains(actualSyncCols, config.Sync.PrimaryKey) {
 		return fmt.Errorf("primary key '%s' is not among the actual sync columns '%v', diff cannot proceed", config.Sync.PrimaryKey, actualSyncCols)
 	}
+	return nil
+}
 
-	// 1. Get current data from DB
+// executeSyncOperations executes the planned sync operations
+func executeSyncOperations(ctx context.Context, tx *sql.Tx, config Config, operations DiffOperations, actualSyncCols []string) error {
+	// INSERT processing
+	if len(operations.ToInsert) > 0 {
+		err := bulkInsert(ctx, tx, config, operations.ToInsert, actualSyncCols)
+		if err != nil {
+			return fmt.Errorf("INSERT error: %w", err)
+		}
+		log.Printf("Inserted %d records.", len(operations.ToInsert))
+	}
+
+	// UPDATE processing
+	if len(operations.ToUpdate) > 0 {
+		updateRecords := make([]DataRecord, len(operations.ToUpdate))
+		for i, op := range operations.ToUpdate {
+			updateRecords[i] = op.After
+		}
+		err := bulkUpdate(ctx, tx, config, updateRecords, actualSyncCols)
+		if err != nil {
+			return fmt.Errorf("UPDATE error: %w", err)
+		}
+		log.Printf("Updated %d records.", len(operations.ToUpdate))
+	}
+
+	// DELETE processing
+	if len(operations.ToDelete) > 0 && config.Sync.DeleteNotInFile {
+		err := bulkDelete(ctx, tx, config, operations.ToDelete)
+		if err != nil {
+			return fmt.Errorf("DELETE error: %w", err)
+		}
+		log.Printf("Deleted %d records.", len(operations.ToDelete))
+	}
+
+	return nil
+}
+
+// syncDiff performs differential synchronization
+func syncDiff(ctx context.Context, tx *sql.Tx, config Config, fileRecords []DataRecord, actualSyncCols []string) error {
+	// Validate requirements for differential sync
+	if err := validateDiffSyncRequirements(config, actualSyncCols); err != nil {
+		return err
+	}
+
+	// Get current data from DB
 	dbRecords, err := getCurrentDBData(ctx, tx, config, actualSyncCols)
 	if err != nil {
 		return fmt.Errorf("DB data retrieval error: %w", err)
 	}
 
-	// 2. Compare file data with DB data
+	// Compare file data with DB data
 	toInsert, toUpdate, toDelete := diffData(config, fileRecords, dbRecords, actualSyncCols)
-	log.Printf("Difference detection result: Insert %d, Update %d, Delete %d", len(toInsert), len(toUpdate), len(toDelete))
-
-	// 3. INSERT processing
-	if len(toInsert) > 0 {
-		err = bulkInsert(ctx, tx, config, toInsert, actualSyncCols)
-		if err != nil {
-			return fmt.Errorf("INSERT error: %w", err)
-		}
-		log.Printf("Inserted %d records.", len(toInsert))
+	operations := DiffOperations{
+		ToInsert: toInsert,
+		ToUpdate: toUpdate,
+		ToDelete: toDelete,
 	}
+	log.Printf("Difference detection result: Insert %d, Update %d, Delete %d",
+		len(operations.ToInsert), len(operations.ToUpdate), len(operations.ToDelete))
 
-	// 4. UPDATE processing
-	if len(toUpdate) > 0 {
-		updateRecords := make([]DataRecord, len(toUpdate))
-		for i, op := range toUpdate {
-			updateRecords[i] = op.After // Use the 'After' state for update
-		}
-		err = bulkUpdate(ctx, tx, config, updateRecords, actualSyncCols)
-		if err != nil {
-			return fmt.Errorf("UPDATE error: %w", err)
-		}
-		log.Printf("Updated %d records.", len(toUpdate))
-	}
-
-	// 5. DELETE processing
-	if len(toDelete) > 0 && config.Sync.DeleteNotInFile {
-		err = bulkDelete(ctx, tx, config, toDelete) // Delete still uses PK from records
-		if err != nil {
-			return fmt.Errorf("DELETE error: %w", err)
-		}
-		log.Printf("Deleted %d records.", len(toDelete))
-	}
-
-	return nil
+	// Execute the planned operations
+	return executeSyncOperations(ctx, tx, config, operations, actualSyncCols)
 }
 
 // getCurrentDBData retrieves current data from database (for differential sync)
@@ -610,6 +638,85 @@ func getCurrentDBData(ctx context.Context, tx *sql.Tx, config Config, actualSync
 	return dbData, nil
 }
 
+// extractPrimaryKeyValue extracts and validates primary key value from a record
+func extractPrimaryKeyValue(record DataRecord, primaryKey string) (string, bool) {
+	pkValue, pkExists := record[primaryKey]
+	if !pkExists || pkValue == nil {
+		return "", false
+	}
+	pkValueStr := convertValueToString(pkValue)
+	if pkValueStr == "" {
+		return "", false
+	}
+	return pkValueStr, true
+}
+
+// compareRecords compares two records and returns true if they differ
+func compareRecords(fileRecord, dbRecord DataRecord, actualSyncCols []string, primaryKey string) bool {
+	for _, col := range actualSyncCols {
+		if col == primaryKey {
+			continue // Don't compare PK value itself for diff content
+		}
+		fileVal, fileColExists := fileRecord[col]
+		dbVal, dbColExists := dbRecord[col]
+
+		if !fileColExists && dbColExists {
+			return true
+		} else if fileColExists && !dbColExists {
+			return true
+		} else if fileColExists && dbColExists {
+			fileStr := convertValueToString(fileVal)
+			if fileStr != dbVal {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// processFileRecords processes file records and determines insert/update operations
+func processFileRecords(fileRecords []DataRecord, dbRecords map[string]DataRecord, config Config, actualSyncCols []string) ([]DataRecord, []UpdateOperation, map[string]bool) {
+	var toInsert []DataRecord
+	var toUpdate []UpdateOperation
+	fileKeys := make(map[string]bool)
+
+	for _, fileRecord := range fileRecords {
+		pkValueStr, isValid := extractPrimaryKeyValue(fileRecord, config.Sync.PrimaryKey)
+		if !isValid {
+			log.Printf("Warning: Record in file is missing primary key '%s' value or key itself. Skipping: %v", config.Sync.PrimaryKey, fileRecord)
+			continue
+		}
+		fileKeys[pkValueStr] = true
+
+		dbRecord, existsInDB := dbRecords[pkValueStr]
+		if !existsInDB {
+			toInsert = append(toInsert, fileRecord)
+		} else if compareRecords(fileRecord, dbRecord, actualSyncCols, config.Sync.PrimaryKey) {
+			toUpdate = append(toUpdate, UpdateOperation{
+				Before: dbRecord,
+				After:  fileRecord,
+			})
+		}
+	}
+
+	return toInsert, toUpdate, fileKeys
+}
+
+// findRecordsToDelete identifies records that need to be deleted
+func findRecordsToDelete(dbRecords map[string]DataRecord, fileKeys map[string]bool, deleteNotInFile bool) []DataRecord {
+	if !deleteNotInFile {
+		return nil
+	}
+
+	var toDelete []DataRecord
+	for pkValue, dbRecord := range dbRecords {
+		if !fileKeys[pkValue] {
+			toDelete = append(toDelete, dbRecord)
+		}
+	}
+	return toDelete
+}
+
 // diffData compares file data with DB data (for differential sync)
 // It now uses actualSyncCols to determine which columns to compare.
 func diffData(
@@ -619,71 +726,17 @@ func diffData(
 	actualSyncCols []string,
 ) (toInsert []DataRecord, toUpdate []UpdateOperation, toDelete []DataRecord) {
 
-	fileKeys := make(map[string]bool)
 	if config.Sync.PrimaryKey == "" {
 		log.Println("Error: Primary key not configured, cannot perform diff.") // Should be caught earlier
 		return
 	}
 
-	for _, fileRecord := range fileRecords {
-		pkValue, pkExists := fileRecord[config.Sync.PrimaryKey]
-		if !pkExists || pkValue == nil {
-			log.Printf("Warning: Record in file is missing primary key '%s' value or key itself. Skipping: %v", config.Sync.PrimaryKey, fileRecord)
-			continue
-		}
-		pkValueStr := convertValueToString(pkValue)
-		if pkValueStr == "" {
-			log.Printf("Warning: Record in file has empty primary key '%s' value. Skipping: %v", config.Sync.PrimaryKey, fileRecord)
-			continue
-		}
-		fileKeys[pkValueStr] = true
+	// Process file records to determine insert/update operations
+	toInsert, toUpdate, fileKeys := processFileRecords(fileRecords, dbRecords, config, actualSyncCols)
 
-		dbRecord, existsInDB := dbRecords[pkValueStr]
-		if !existsInDB {
-			toInsert = append(toInsert, fileRecord)
-		} else {
-			isDiff := false
-			// Compare only using actualSyncCols that are not the primary key
-			for _, col := range actualSyncCols {
-				if col == config.Sync.PrimaryKey {
-					continue // Don't compare PK value itself for diff content
-				}
-				// Ensure both records have the column, though they should if actualSyncCols is derived correctly
-				fileVal, fileColExists := fileRecord[col]
-				dbVal, dbColExists := dbRecord[col]
+	// Identify records to delete
+	toDelete = findRecordsToDelete(dbRecords, fileKeys, config.Sync.DeleteNotInFile)
 
-				if !fileColExists && dbColExists { // Column in DB but not in file record for this PK (should not happen if file is consistent)
-					isDiff = true
-					break
-				} else if fileColExists && !dbColExists { // Column in file record but not in DB for this PK (could happen if DB schema changed)
-					isDiff = true
-					break
-				} else if fileColExists && dbColExists {
-					// Convert fileVal to string for comparison with dbVal
-					fileStr := convertValueToString(fileVal)
-					if fileStr != dbVal {
-						isDiff = true
-						break
-					}
-				}
-				// If neither exists, or both exist and are same, continue
-			}
-			if isDiff {
-				toUpdate = append(toUpdate, UpdateOperation{
-					Before: dbRecord,
-					After:  fileRecord,
-				})
-			}
-		}
-	}
-
-	if config.Sync.DeleteNotInFile {
-		for pkValue, dbRecord := range dbRecords {
-			if !fileKeys[pkValue] {
-				toDelete = append(toDelete, dbRecord)
-			}
-		}
-	}
 	return
 }
 
@@ -746,11 +799,11 @@ func bulkUpdate(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 	setClauses := []string{}
 	// Determine columns to include in SET clause
 	// These are actualSyncCols excluding PK and immutable columns
-	updateableRecordCols := []string{} // Columns from record to use in SET
+	updatableRecordCols := []string{} // Columns from record to use in SET
 	for _, col := range actualSyncCols {
 		if col != config.Sync.PrimaryKey && !slices.Contains(config.Sync.ImmutableColumns, col) {
 			setClauses = append(setClauses, fmt.Sprintf("%s = ?", col))
-			updateableRecordCols = append(updateableRecordCols, col)
+			updatableRecordCols = append(updatableRecordCols, col)
 		}
 	}
 
@@ -781,8 +834,8 @@ func bulkUpdate(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 
 	now := time.Now()
 	for _, record := range records {
-		args := make([]any, 0, len(updateableRecordCols)+len(activeTimestampSetCols)+1)
-		for _, col := range updateableRecordCols {
+		args := make([]any, 0, len(updatableRecordCols)+len(activeTimestampSetCols)+1)
+		for _, col := range updatableRecordCols {
 			args = append(args, record[col])
 		}
 		for range activeTimestampSetCols {
