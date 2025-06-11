@@ -90,6 +90,13 @@ type UpdateOperation struct {
 	After  DataRecord
 }
 
+// DiffOperations represents the operations to be performed during differential synchronization
+type DiffOperations struct {
+	ToInsert []DataRecord
+	ToUpdate []UpdateOperation
+	ToDelete []DataRecord
+}
+
 // ExecutionPlan represents the planned operations for data synchronization
 type ExecutionPlan struct {
 	SyncMode         string
@@ -476,57 +483,78 @@ func syncOverwrite(ctx context.Context, tx *sql.Tx, config Config, fileRecords [
 	return nil
 }
 
-// syncDiff performs differential synchronization
-func syncDiff(ctx context.Context, tx *sql.Tx, config Config, fileRecords []DataRecord, actualSyncCols []string) error {
+// validateDiffSyncRequirements validates the requirements for differential synchronization
+func validateDiffSyncRequirements(config Config, actualSyncCols []string) error {
 	if config.Sync.PrimaryKey == "" {
 		return fmt.Errorf("primary key is required for diff sync mode")
 	}
 	if !slices.Contains(actualSyncCols, config.Sync.PrimaryKey) {
 		return fmt.Errorf("primary key '%s' is not among the actual sync columns '%v', diff cannot proceed", config.Sync.PrimaryKey, actualSyncCols)
 	}
+	return nil
+}
 
-	// 1. Get current data from DB
+// executeSyncOperations executes the planned sync operations
+func executeSyncOperations(ctx context.Context, tx *sql.Tx, config Config, operations DiffOperations, actualSyncCols []string) error {
+	// INSERT processing
+	if len(operations.ToInsert) > 0 {
+		err := bulkInsert(ctx, tx, config, operations.ToInsert, actualSyncCols)
+		if err != nil {
+			return fmt.Errorf("INSERT error: %w", err)
+		}
+		log.Printf("Inserted %d records.", len(operations.ToInsert))
+	}
+
+	// UPDATE processing
+	if len(operations.ToUpdate) > 0 {
+		updateRecords := make([]DataRecord, len(operations.ToUpdate))
+		for i, op := range operations.ToUpdate {
+			updateRecords[i] = op.After
+		}
+		err := bulkUpdate(ctx, tx, config, updateRecords, actualSyncCols)
+		if err != nil {
+			return fmt.Errorf("UPDATE error: %w", err)
+		}
+		log.Printf("Updated %d records.", len(operations.ToUpdate))
+	}
+
+	// DELETE processing
+	if len(operations.ToDelete) > 0 && config.Sync.DeleteNotInFile {
+		err := bulkDelete(ctx, tx, config, operations.ToDelete)
+		if err != nil {
+			return fmt.Errorf("DELETE error: %w", err)
+		}
+		log.Printf("Deleted %d records.", len(operations.ToDelete))
+	}
+
+	return nil
+}
+
+// syncDiff performs differential synchronization
+func syncDiff(ctx context.Context, tx *sql.Tx, config Config, fileRecords []DataRecord, actualSyncCols []string) error {
+	// Validate requirements for differential sync
+	if err := validateDiffSyncRequirements(config, actualSyncCols); err != nil {
+		return err
+	}
+
+	// Get current data from DB
 	dbRecords, err := getCurrentDBData(ctx, tx, config, actualSyncCols)
 	if err != nil {
 		return fmt.Errorf("DB data retrieval error: %w", err)
 	}
 
-	// 2. Compare file data with DB data
+	// Compare file data with DB data
 	toInsert, toUpdate, toDelete := diffData(config, fileRecords, dbRecords, actualSyncCols)
-	log.Printf("Difference detection result: Insert %d, Update %d, Delete %d", len(toInsert), len(toUpdate), len(toDelete))
-
-	// 3. INSERT processing
-	if len(toInsert) > 0 {
-		err = bulkInsert(ctx, tx, config, toInsert, actualSyncCols)
-		if err != nil {
-			return fmt.Errorf("INSERT error: %w", err)
-		}
-		log.Printf("Inserted %d records.", len(toInsert))
+	operations := DiffOperations{
+		ToInsert: toInsert,
+		ToUpdate: toUpdate,
+		ToDelete: toDelete,
 	}
+	log.Printf("Difference detection result: Insert %d, Update %d, Delete %d",
+		len(operations.ToInsert), len(operations.ToUpdate), len(operations.ToDelete))
 
-	// 4. UPDATE processing
-	if len(toUpdate) > 0 {
-		updateRecords := make([]DataRecord, len(toUpdate))
-		for i, op := range toUpdate {
-			updateRecords[i] = op.After // Use the 'After' state for update
-		}
-		err = bulkUpdate(ctx, tx, config, updateRecords, actualSyncCols)
-		if err != nil {
-			return fmt.Errorf("UPDATE error: %w", err)
-		}
-		log.Printf("Updated %d records.", len(toUpdate))
-	}
-
-	// 5. DELETE processing
-	if len(toDelete) > 0 && config.Sync.DeleteNotInFile {
-		err = bulkDelete(ctx, tx, config, toDelete) // Delete still uses PK from records
-		if err != nil {
-			return fmt.Errorf("DELETE error: %w", err)
-		}
-		log.Printf("Deleted %d records.", len(toDelete))
-	}
-
-	return nil
+	// Execute the planned operations
+	return executeSyncOperations(ctx, tx, config, operations, actualSyncCols)
 }
 
 // getCurrentDBData retrieves current data from database (for differential sync)
@@ -620,6 +648,7 @@ func diffData(
 ) (toInsert []DataRecord, toUpdate []UpdateOperation, toDelete []DataRecord) {
 
 	fileKeys := make(map[string]bool)
+
 	if config.Sync.PrimaryKey == "" {
 		log.Println("Error: Primary key not configured, cannot perform diff.") // Should be caught earlier
 		return
@@ -746,11 +775,11 @@ func bulkUpdate(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 	setClauses := []string{}
 	// Determine columns to include in SET clause
 	// These are actualSyncCols excluding PK and immutable columns
-	updateableRecordCols := []string{} // Columns from record to use in SET
+	updatableRecordCols := []string{} // Columns from record to use in SET
 	for _, col := range actualSyncCols {
 		if col != config.Sync.PrimaryKey && !slices.Contains(config.Sync.ImmutableColumns, col) {
 			setClauses = append(setClauses, fmt.Sprintf("%s = ?", col))
-			updateableRecordCols = append(updateableRecordCols, col)
+			updatableRecordCols = append(updatableRecordCols, col)
 		}
 	}
 
@@ -781,8 +810,8 @@ func bulkUpdate(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 
 	now := time.Now()
 	for _, record := range records {
-		args := make([]any, 0, len(updateableRecordCols)+len(activeTimestampSetCols)+1)
-		for _, col := range updateableRecordCols {
+		args := make([]any, 0, len(updatableRecordCols)+len(activeTimestampSetCols)+1)
+		for _, col := range updatableRecordCols {
 			args = append(args, record[col])
 		}
 		for range activeTimestampSetCols {
