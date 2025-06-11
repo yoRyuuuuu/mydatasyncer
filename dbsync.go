@@ -6,11 +6,83 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	// "github.com/pkg/errors" // Removed as per user feedback
 )
+
+// convertValueToString converts any value to string for comparison
+// Uses fast type assertions for common types, fallback to reflection for others
+func convertValueToString(val any) string {
+	if val == nil {
+		return ""
+	}
+
+	// Fast path: Use type assertions for common types
+	switch v := val.(type) {
+	case string:
+		return v
+	case bool:
+		return strconv.FormatBool(v)
+	case int:
+		return strconv.Itoa(v)
+	case int8:
+		return strconv.FormatInt(int64(v), 10)
+	case int16:
+		return strconv.FormatInt(int64(v), 10)
+	case int32:
+		return strconv.FormatInt(int64(v), 10)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case uint:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint8:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint16:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint32:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint64:
+		return strconv.FormatUint(v, 10)
+	case float32:
+		f := float64(v)
+		if f == float64(int64(f)) {
+			return strconv.FormatInt(int64(f), 10)
+		}
+		return strconv.FormatFloat(f, 'g', -1, 32)
+	case float64:
+		if v == float64(int64(v)) {
+			return strconv.FormatInt(int64(v), 10)
+		}
+		return strconv.FormatFloat(v, 'g', -1, 64)
+	case time.Time:
+		return v.Format(time.RFC3339)
+	}
+
+	// Slow path: Use reflection for other types
+	rv := reflect.ValueOf(val)
+	switch rv.Kind() {
+	case reflect.String:
+		return val.(string)
+	case reflect.Bool:
+		return strconv.FormatBool(val.(bool))
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.FormatInt(rv.Int(), 10)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return strconv.FormatUint(rv.Uint(), 10)
+	case reflect.Float32, reflect.Float64:
+		f := rv.Float()
+		if f == float64(int64(f)) {
+			return strconv.FormatInt(int64(f), 10)
+		}
+		return strconv.FormatFloat(f, 'g', -1, 64)
+	default:
+		return fmt.Sprintf("%v", val)
+	}
+}
 
 // UpdateOperation represents a single update operation with before and after states
 type UpdateOperation struct {
@@ -40,7 +112,7 @@ func (p *ExecutionPlan) String() string {
 
 	buf.WriteString("[DRY-RUN Mode] Execution Plan\n")
 	buf.WriteString("----------------------------------------------------\n")
-	buf.WriteString(fmt.Sprintf("Execution Summary:\n"))
+	buf.WriteString("Execution Summary:\n")
 	buf.WriteString(fmt.Sprintf("- Sync Mode: %s\n", p.SyncMode))
 	buf.WriteString(fmt.Sprintf("- Target Table: %s\n", p.TableName))
 	buf.WriteString(fmt.Sprintf("- Records in File: %d\n", p.FileRecordCount))
@@ -555,13 +627,18 @@ func diffData(
 
 	for _, fileRecord := range fileRecords {
 		pkValue, pkExists := fileRecord[config.Sync.PrimaryKey]
-		if !pkExists || pkValue == "" {
+		if !pkExists || pkValue == nil {
 			log.Printf("Warning: Record in file is missing primary key '%s' value or key itself. Skipping: %v", config.Sync.PrimaryKey, fileRecord)
 			continue
 		}
-		fileKeys[pkValue] = true
+		pkValueStr := convertValueToString(pkValue)
+		if pkValueStr == "" {
+			log.Printf("Warning: Record in file has empty primary key '%s' value. Skipping: %v", config.Sync.PrimaryKey, fileRecord)
+			continue
+		}
+		fileKeys[pkValueStr] = true
 
-		dbRecord, existsInDB := dbRecords[pkValue]
+		dbRecord, existsInDB := dbRecords[pkValueStr]
 		if !existsInDB {
 			toInsert = append(toInsert, fileRecord)
 		} else {
@@ -581,9 +658,13 @@ func diffData(
 				} else if fileColExists && !dbColExists { // Column in file record but not in DB for this PK (could happen if DB schema changed)
 					isDiff = true
 					break
-				} else if fileColExists && dbColExists && fileVal != dbVal {
-					isDiff = true
-					break
+				} else if fileColExists && dbColExists {
+					// Convert fileVal to string for comparison with dbVal
+					fileStr := convertValueToString(fileVal)
+					if fileStr != dbVal {
+						isDiff = true
+						break
+					}
 				}
 				// If neither exists, or both exist and are same, continue
 			}
