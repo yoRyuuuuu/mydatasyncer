@@ -15,6 +15,8 @@ const (
 	e2eTestTableName               = "test_table"
 	e2eTestConfigSmallCSV          = "testdata/config_small.yml"
 	e2eTestDataSmallCSV            = "testdata/small_data.csv"
+	e2eTestConfigCSVDiff           = "testdata/e2e_config_csv_diff.yml"
+	e2eTestDataCSVDiff             = "testdata/e2e_data_csv_diff.csv"
 	e2eTestConfigJSONOverwrite     = "testdata/e2e_config_json_overwrite.yml"
 	e2eTestDataJSONOverwrite       = "testdata/e2e_data_overwrite.json"
 	e2eTestConfigJSONDiff          = "testdata/e2e_config_json_diff.yml"
@@ -147,6 +149,36 @@ func TestE2ESyncSmallDataCSV(t *testing.T) {
 		{ID: 1, Name: "John Doe", Email: "john.doe@example.com"},
 		{ID: 2, Name: "Jane Smith", Email: "jane.smith@example.com"},
 		{ID: 3, Name: "Alice Johnson", Email: "alice.johnson@example.com"},
+	}
+	e2eVerifyDBState(t, db, expectedRecords)
+}
+
+func TestE2ESyncCSV_Diff_WithDeletes(t *testing.T) {
+	checkTestFileExists(t, e2eTestConfigCSVDiff)
+	checkTestFileExists(t, e2eTestDataCSVDiff)
+
+	db := e2eSetupTestDB(t)
+	defer e2eTearDownTestDB(t, db)
+
+	// Initial data in DB
+	initialDBData := []TestRecord{
+		{ID: 402, Name: "CSV Diff User Old", Email: "csv.diff.old@example.com"},       // This will be updated
+		{ID: 403, Name: "CSV Diff User Delete", Email: "csv.diff.delete@example.com"}, // This will be deleted
+	}
+	e2eInsertInitialData(t, db, initialDBData)
+
+	err := RunApp(e2eTestConfigCSVDiff, false)
+	if err != nil {
+		t.Fatalf("RunApp with CSV diff failed: %v", err)
+	}
+
+	// Expected data after diff sync
+	// Record 401 is new.
+	// Record 402 is updated.
+	// Record 403 is deleted.
+	expectedRecords := []TestRecord{
+		{ID: 401, Name: "CSV Diff User New", Email: "csv.diff.new@example.com"},
+		{ID: 402, Name: "CSV Diff User Updated", Email: "csv.diff.updated.new@example.com"},
 	}
 	e2eVerifyDBState(t, db, expectedRecords)
 }
