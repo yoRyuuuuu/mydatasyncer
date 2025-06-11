@@ -148,8 +148,8 @@ func TestJSONLoader_Load_Success(t *testing.T) {
 ]`,
 			columns: []string{"id", "name", "stock"},
 			expected: []DataRecord{
-				{"id": "1", "name": "Product A", "stock": "10"},
-				{"id": "2", "name": "Product B", "stock": "5"},
+				{"id": "1", "name": "Product A", "stock": float64(10)},
+				{"id": "2", "name": "Product B", "stock": float64(5)},
 			},
 		},
 		{
@@ -165,7 +165,7 @@ func TestJSONLoader_Load_Success(t *testing.T) {
 ]`,
 			columns: []string{"id", "name", "available", "rating"},
 			expected: []DataRecord{
-				{"id": "1", "name": "Test", "available": "true", "rating": "4.5"},
+				{"id": float64(1), "name": "Test", "available": true, "rating": 4.5},
 			},
 		},
 		{
@@ -187,7 +187,7 @@ func TestJSONLoader_Load_Success(t *testing.T) {
 ]`,
 			columns: []string{}, // Empty - should auto-detect and sort keys
 			expected: []DataRecord{
-				{"active": "true", "id": "1", "name": "Test"}, // Keys sorted alphabetically
+				{"active": true, "id": float64(1), "name": "Test"},
 			},
 		},
 		{
@@ -198,14 +198,14 @@ func TestJSONLoader_Load_Success(t *testing.T) {
 			columns: []string{"int_val", "float_val", "bool_true", "bool_false", "null_val", "string_val", "zero_int", "zero_float"},
 			expected: []DataRecord{
 				{
-					"int_val":     "42",        // 整数は小数点なしで表現
-					"float_val":   "3.14159",   // 浮動小数点は適切な精度で表現
-					"bool_true":   "true",      // boolean true
-					"bool_false":  "false",     // boolean false
-					"null_val":    "",          // null は空文字列
-					"string_val":  "text",      // 文字列はそのまま
-					"zero_int":    "0",         // ゼロ整数
-					"zero_float":  "0",         // ゼロ浮動小数点は整数として表現
+					"int_val":     float64(42),
+					"float_val":   3.14159,
+					"bool_true":   true,        // boolean true
+					"bool_false":  false,       // boolean false
+					"null_val":    nil,
+					"string_val":  "text",
+					"zero_int":    float64(0),
+					"zero_float":  0.0,
 				},
 			},
 		},
@@ -217,10 +217,10 @@ func TestJSONLoader_Load_Success(t *testing.T) {
 			columns: []string{"large_int", "small_float", "large_float", "negative_val"},
 			expected: []DataRecord{
 				{
-					"large_int":    "9007199254740991",      // 大きな整数も正確に
-					"small_float":  "0.000001",              // 小さな浮動小数点
-					"large_float":  "123456789.98765433",    // 大きな浮動小数点（float64精度制限）
-					"negative_val": "-42.5",                 // 負の数値
+					"large_int":    9.007199254740991e+15,
+					"small_float":  1e-06,
+					"large_float":  1.2345678998765433e+08,
+					"negative_val": -42.5,
 				},
 			},
 		},
@@ -236,6 +236,14 @@ func TestJSONLoader_Load_Success(t *testing.T) {
 			}
 			if !reflect.DeepEqual(records, tt.expected) {
 				t.Errorf("Load() got = %v, want %v", records, tt.expected)
+				if len(records) > 0 && len(tt.expected) > 0 {
+					for k, v := range records[0] {
+						expectedV := tt.expected[0][k]
+						if reflect.TypeOf(v) != reflect.TypeOf(expectedV) {
+							t.Errorf("Type mismatch for key %s: got %T, want %T", k, v, expectedV)
+						}
+					}
+				}
 			}
 		})
 	}

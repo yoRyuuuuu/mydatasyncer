@@ -6,11 +6,48 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
 	// "github.com/pkg/errors" // Removed as per user feedback
 )
+
+// convertValueToString converts any value to string for comparison
+// Uses reflection to handle different types safely
+func convertValueToString(val any) string {
+	if val == nil {
+		return ""
+	}
+
+	v := reflect.ValueOf(val)
+	switch v.Kind() {
+	case reflect.String:
+		return val.(string)
+	case reflect.Bool:
+		if val.(bool) {
+			return "true"
+		}
+		return "false"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return fmt.Sprintf("%d", v.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return fmt.Sprintf("%d", v.Uint())
+	case reflect.Float32, reflect.Float64:
+		f := v.Float()
+		// Check if it's a whole number to avoid unnecessary decimal places
+		if f == float64(int64(f)) {
+			return fmt.Sprintf("%d", int64(f))
+		}
+		return fmt.Sprintf("%g", f)
+	default:
+		// Handle time.Time and other complex types
+		if t, ok := val.(time.Time); ok {
+			return t.Format(time.RFC3339)
+		}
+		return fmt.Sprintf("%v", val)
+	}
+}
 
 // UpdateOperation represents a single update operation with before and after states
 type UpdateOperation struct {
@@ -40,7 +77,7 @@ func (p *ExecutionPlan) String() string {
 
 	buf.WriteString("[DRY-RUN Mode] Execution Plan\n")
 	buf.WriteString("----------------------------------------------------\n")
-	buf.WriteString(fmt.Sprintf("Execution Summary:\n"))
+	buf.WriteString("Execution Summary:\n")
 	buf.WriteString(fmt.Sprintf("- Sync Mode: %s\n", p.SyncMode))
 	buf.WriteString(fmt.Sprintf("- Target Table: %s\n", p.TableName))
 	buf.WriteString(fmt.Sprintf("- Records in File: %d\n", p.FileRecordCount))
@@ -586,9 +623,13 @@ func diffData(
 				} else if fileColExists && !dbColExists { // Column in file record but not in DB for this PK (could happen if DB schema changed)
 					isDiff = true
 					break
-				} else if fileColExists && dbColExists && fmt.Sprintf("%v", fileVal) != dbVal {
-					isDiff = true
-					break
+				} else if fileColExists && dbColExists {
+					// Convert fileVal to string for comparison with dbVal
+					fileStr := convertValueToString(fileVal)
+					if fileStr != dbVal {
+						isDiff = true
+						break
+					}
 				}
 				// If neither exists, or both exist and are same, continue
 			}
