@@ -8,43 +8,78 @@ import (
 	"log"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	// "github.com/pkg/errors" // Removed as per user feedback
 )
 
 // convertValueToString converts any value to string for comparison
-// Uses reflection to handle different types safely
+// Uses fast type assertions for common types, fallback to reflection for others
 func convertValueToString(val any) string {
 	if val == nil {
 		return ""
 	}
 
-	v := reflect.ValueOf(val)
-	switch v.Kind() {
+	// Fast path: Use type assertions for common types
+	switch v := val.(type) {
+	case string:
+		return v
+	case bool:
+		return strconv.FormatBool(v)
+	case int:
+		return strconv.Itoa(v)
+	case int8:
+		return strconv.FormatInt(int64(v), 10)
+	case int16:
+		return strconv.FormatInt(int64(v), 10)
+	case int32:
+		return strconv.FormatInt(int64(v), 10)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case uint:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint8:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint16:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint32:
+		return strconv.FormatUint(uint64(v), 10)
+	case uint64:
+		return strconv.FormatUint(v, 10)
+	case float32:
+		f := float64(v)
+		if f == float64(int64(f)) {
+			return strconv.FormatInt(int64(f), 10)
+		}
+		return strconv.FormatFloat(f, 'g', -1, 32)
+	case float64:
+		if v == float64(int64(v)) {
+			return strconv.FormatInt(int64(v), 10)
+		}
+		return strconv.FormatFloat(v, 'g', -1, 64)
+	case time.Time:
+		return v.Format(time.RFC3339)
+	}
+
+	// Slow path: Use reflection for other types
+	rv := reflect.ValueOf(val)
+	switch rv.Kind() {
 	case reflect.String:
 		return val.(string)
 	case reflect.Bool:
-		if val.(bool) {
-			return "true"
-		}
-		return "false"
+		return strconv.FormatBool(val.(bool))
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return fmt.Sprintf("%d", v.Int())
+		return strconv.FormatInt(rv.Int(), 10)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return fmt.Sprintf("%d", v.Uint())
+		return strconv.FormatUint(rv.Uint(), 10)
 	case reflect.Float32, reflect.Float64:
-		f := v.Float()
-		// Check if it's a whole number to avoid unnecessary decimal places
+		f := rv.Float()
 		if f == float64(int64(f)) {
-			return fmt.Sprintf("%d", int64(f))
+			return strconv.FormatInt(int64(f), 10)
 		}
-		return fmt.Sprintf("%g", f)
+		return strconv.FormatFloat(f, 'g', -1, 64)
 	default:
-		// Handle time.Time and other complex types
-		if t, ok := val.(time.Time); ok {
-			return t.Format(time.RFC3339)
-		}
 		return fmt.Sprintf("%v", val)
 	}
 }
