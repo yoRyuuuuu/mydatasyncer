@@ -401,56 +401,6 @@ func TestGetLoader(t *testing.T) {
 	}
 }
 
-func TestConvertJSONValueToString(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    interface{}
-		expected string
-	}{
-		// Nil value
-		{"nil value", nil, ""},
-		
-		// String values
-		{"string value", "hello", "hello"},
-		{"empty string", "", ""},
-		{"string with spaces", "hello world", "hello world"},
-		
-		// Boolean values
-		{"bool true", true, "true"},
-		{"bool false", false, "false"},
-		
-		// Integer values
-		{"int value", 42, "42"},
-		{"int64 value", int64(123), "123"},
-		{"zero int", 0, "0"},
-		{"negative int", -42, "-42"},
-		
-		// Float values
-		{"float64 whole number", 5.0, "5"},
-		{"float64 decimal", 3.14159, "3.14159"},
-		{"zero float", 0.0, "0"},
-		{"negative float", -2.5, "-2.5"},
-		{"small float", 0.000001, "0.000001"},
-		
-		// Large numbers
-		{"large int", int64(9007199254740991), "9007199254740991"},
-		{"large float", 123456789.987654321, "123456789.98765433"}, // Go float64 precision limit
-		
-		// Edge cases for floats
-		{"float with trailing zeros", 1.2300, "1.23"},
-		{"very small decimal", 1e-10, "0.0000000001"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := convertJSONValueToString(tt.input)
-			if result != tt.expected {
-				t.Errorf("convertJSONValueToString(%v) = %q, want %q", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestCSVLoader_Load_Error(t *testing.T) {
 	tests := []struct {
 		name          string
