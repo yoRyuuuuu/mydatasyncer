@@ -14,28 +14,36 @@ import (
 	// "github.com/pkg/errors" // Removed as per user feedback
 )
 
-// PrimaryKey represents a type-preserving primary key structure
+// PrimaryKey represents a type-preserving primary key structure that maintains
+// both the original typed value and its string representation for safe comparison
+// and SQL operations.
+//
+// Example usage:
+//   pk1 := NewPrimaryKey(123)
+//   pk2 := NewPrimaryKey("123")
+//   if pk1.Equal(pk2) {
+//       // Handle equal primary keys
+//   }
 type PrimaryKey struct {
-	Value interface{} // Original typed value
+	Value any // Original typed value from the data source
 	Str   string      // String representation for display and SQL operations
 }
 
-// NewPrimaryKey creates a new PrimaryKey with type preservation
-func NewPrimaryKey(value interface{}) PrimaryKey {
+// NewPrimaryKey creates a new PrimaryKey with type preservation and validation
+func NewPrimaryKey(value any) PrimaryKey {
+	if value == nil {
+		return PrimaryKey{Value: nil, Str: ""}
+	}
 	return PrimaryKey{
 		Value: value,
 		Str:   convertValueToString(value),
 	}
 }
 
-// Equal compares two PrimaryKey values for equality
+// Equal compares two PrimaryKey values for equality using type-safe comparison
 func (pk PrimaryKey) Equal(other PrimaryKey) bool {
-	// Try direct value comparison first for better performance and accuracy
-	if pk.Value == other.Value {
-		return true
-	}
-	// Fallback to string comparison for safety
-	return pk.Str == other.Str
+	// Type-safe comparison using reflection for complex types
+	return reflect.DeepEqual(pk.Value, other.Value) || pk.Str == other.Str
 }
 
 // String returns the string representation of the PrimaryKey
@@ -657,12 +665,12 @@ func getCurrentDBData(ctx context.Context, tx *sql.Tx, config Config, actualSync
 		}
 		if pkValue == nil {
 			// Skip or error if primary key can't be obtained
-			log.Printf("Warning: Found record with empty primary key. Skipping. Record: %v", record)
+			log.Printf("Warning: Found record with nil primary key value. Skipping. Record: %v", record)
 			continue
 		}
 		pk := NewPrimaryKey(pkValue)
 		if pk.Str == "" {
-			log.Printf("Warning: Found record with empty primary key string representation. Skipping. Record: %v", record)
+			log.Printf("Warning: Found record with empty primary key after string conversion. Skipping. Record: %v", record)
 			continue
 		}
 		dbData[pk.Str] = record
