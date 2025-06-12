@@ -35,7 +35,7 @@ type Config struct {
 func NewDefaultConfig() Config {
 	return Config{
 		DB: DBConfig{
-			DSN: "user:password@tcp(127.0.0.1:3306)/testdb?parseTime=true",
+			DSN: "", // DSN must be provided in config file
 		},
 		Sync: SyncConfig{
 			FilePath:         "./testdata.csv",
@@ -92,10 +92,7 @@ func LoadConfig(configPath string) Config {
 func setDefaultsIfNeeded(cfg *Config) {
 	defaultCfg := NewDefaultConfig()
 
-	// DB defaults
-	if cfg.DB.DSN == "" {
-		cfg.DB.DSN = defaultCfg.DB.DSN
-	}
+	// DB defaults - DSN is not set to default, it must be provided
 
 	// Sync defaults
 	if cfg.Sync.FilePath == "" {
