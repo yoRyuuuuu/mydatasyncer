@@ -14,6 +14,43 @@ import (
 	// "github.com/pkg/errors" // Removed as per user feedback
 )
 
+// PrimaryKey represents a type-preserving primary key structure that maintains
+// both the original typed value and its string representation for safe comparison
+// and SQL operations.
+//
+// Example usage:
+//   pk1 := NewPrimaryKey(123)
+//   pk2 := NewPrimaryKey("123")
+//   if pk1.Equal(pk2) {
+//       // Handle equal primary keys
+//   }
+type PrimaryKey struct {
+	Value any // Original typed value from the data source
+	Str   string      // String representation for display and SQL operations
+}
+
+// NewPrimaryKey creates a new PrimaryKey with type preservation and validation
+func NewPrimaryKey(value any) PrimaryKey {
+	if value == nil {
+		return PrimaryKey{Value: nil, Str: ""}
+	}
+	return PrimaryKey{
+		Value: value,
+		Str:   convertValueToString(value),
+	}
+}
+
+// Equal compares two PrimaryKey values for equality using type-safe comparison
+func (pk PrimaryKey) Equal(other PrimaryKey) bool {
+	// Type-safe comparison using reflection for complex types
+	return reflect.DeepEqual(pk.Value, other.Value) || pk.Str == other.Str
+}
+
+// String returns the string representation of the PrimaryKey
+func (pk PrimaryKey) String() string {
+	return pk.Str
+}
+
 // convertValueToString converts any value to string for comparison
 // Uses fast type assertions for common types, fallback to reflection for others
 func convertValueToString(val any) string {
@@ -328,7 +365,7 @@ func generateExecutionPlan(ctx context.Context, tx *sql.Tx, config Config, fileR
 	switch config.Sync.SyncMode {
 	case "overwrite":
 		// For overwrite mode, all records will be deleted and reinserted
-		dbRecords, err := getCurrentDBData(ctx, tx, config, actualSyncCols) // Pass actualSyncCols
+		dbRecords, _, err := getCurrentDBData(ctx, tx, config, actualSyncCols) // Pass actualSyncCols
 		if err != nil {
 			return nil, fmt.Errorf("error getting current DB data for overwrite plan: %w", err)
 		}
@@ -348,7 +385,7 @@ func generateExecutionPlan(ctx context.Context, tx *sql.Tx, config Config, fileR
 			return nil, fmt.Errorf("primary key '%s' (from config) is not present in the actual columns to be synced (%v) based on CSV headers and DB schema. Diff mode cannot proceed", config.Sync.PrimaryKey, actualSyncCols)
 		}
 
-		dbRecords, err := getCurrentDBData(ctx, tx, config, actualSyncCols) // Pass actualSyncCols
+		dbRecords, _, err := getCurrentDBData(ctx, tx, config, actualSyncCols) // Pass actualSyncCols
 		if err != nil {
 			return nil, fmt.Errorf("error getting current DB data for diff plan: %w", err)
 		}
@@ -538,7 +575,7 @@ func syncDiff(ctx context.Context, tx *sql.Tx, config Config, fileRecords []Data
 	}
 
 	// Get current data from DB
-	dbRecords, err := getCurrentDBData(ctx, tx, config, actualSyncCols)
+	dbRecords, _, err := getCurrentDBData(ctx, tx, config, actualSyncCols)
 	if err != nil {
 		return fmt.Errorf("DB data retrieval error: %w", err)
 	}
@@ -560,9 +597,9 @@ func syncDiff(ctx context.Context, tx *sql.Tx, config Config, fileRecords []Data
 // getCurrentDBData retrieves current data from database (for differential sync)
 // It now uses actualSyncCols to determine which columns to SELECT.
 // The Primary Key must be part of actualSyncCols for diff to work.
-func getCurrentDBData(ctx context.Context, tx *sql.Tx, config Config, actualSyncCols []string) (map[string]DataRecord, error) {
+func getCurrentDBData(ctx context.Context, tx *sql.Tx, config Config, actualSyncCols []string) (map[string]DataRecord, map[string]PrimaryKey, error) {
 	if len(actualSyncCols) == 0 {
-		return nil, fmt.Errorf("no columns specified to fetch from database")
+		return nil, nil, fmt.Errorf("no columns specified to fetch from database")
 	}
 
 	selectCols := slices.Clone(actualSyncCols)
@@ -577,7 +614,7 @@ func getCurrentDBData(ctx context.Context, tx *sql.Tx, config Config, actualSync
 		// This function should only select columns that are in actualSyncCols.
 		// The check for PK presence in actualSyncCols should be done *before* calling this.
 		// So, if PK is not in actualSyncCols here, it's a problem.
-		return nil, fmt.Errorf("primary key '%s' is configured but not in actual sync columns %v; cannot fetch DB data correctly for diff", config.Sync.PrimaryKey, actualSyncCols)
+		return nil, nil, fmt.Errorf("primary key '%s' is configured but not in actual sync columns %v; cannot fetch DB data correctly for diff", config.Sync.PrimaryKey, actualSyncCols)
 	}
 
 	query := fmt.Sprintf("SELECT %s FROM %s",
@@ -586,16 +623,17 @@ func getCurrentDBData(ctx context.Context, tx *sql.Tx, config Config, actualSync
 
 	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("query execution error (%s): %w", query, err)
+		return nil, nil, fmt.Errorf("query execution error (%s): %w", query, err)
 	}
 	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {
-		return nil, fmt.Errorf("column name retrieval error: %w", err)
+		return nil, nil, fmt.Errorf("column name retrieval error: %w", err)
 	}
 
-	dbData := make(map[string]DataRecord) // Map with primary key as key
+	dbData := make(map[string]DataRecord) // Map with primary key string as key
+	pkMap := make(map[string]PrimaryKey)  // Map to store PrimaryKey objects
 	vals := make([]any, len(cols))
 	scanArgs := make([]any, len(cols))
 	for i := range vals {
@@ -605,10 +643,10 @@ func getCurrentDBData(ctx context.Context, tx *sql.Tx, config Config, actualSync
 	for rows.Next() {
 		err = rows.Scan(scanArgs...)
 		if err != nil {
-			return nil, fmt.Errorf("row data scan error: %w", err)
+			return nil, nil, fmt.Errorf("row data scan error: %w", err)
 		}
 		record := make(DataRecord)
-		var pkValue string
+		var pkValue any
 		for i, colName := range cols {
 			// Values from DB might be []byte or specific types, convert to string
 			val := vals[i]
@@ -621,34 +659,41 @@ func getCurrentDBData(ctx context.Context, tx *sql.Tx, config Config, actualSync
 
 			record[colName] = strVal
 			if colName == config.Sync.PrimaryKey {
+				// For PrimaryKey, use the string representation to ensure consistency
 				pkValue = strVal
 			}
 		}
-		if pkValue == "" {
+		if pkValue == nil {
 			// Skip or error if primary key can't be obtained
-			log.Printf("Warning: Found record with empty primary key. Skipping. Record: %v", record)
+			log.Printf("Warning: Found record with nil primary key value. Skipping. Record: %v", record)
 			continue
 		}
-		dbData[pkValue] = record
+		pk := NewPrimaryKey(pkValue)
+		if pk.Str == "" {
+			log.Printf("Warning: Found record with empty primary key after string conversion. Skipping. Record: %v", record)
+			continue
+		}
+		dbData[pk.Str] = record
+		pkMap[pk.Str] = pk
 	}
 	if err = rows.Err(); err != nil {
-		return nil, fmt.Errorf("row processing error: %w", err)
+		return nil, nil, fmt.Errorf("row processing error: %w", err)
 	}
 
-	return dbData, nil
+	return dbData, pkMap, nil
 }
 
 // extractPrimaryKeyValue extracts and validates primary key value from a record
-func extractPrimaryKeyValue(record DataRecord, primaryKey string) (string, bool) {
+func extractPrimaryKeyValue(record DataRecord, primaryKey string) (PrimaryKey, bool) {
 	pkValue, pkExists := record[primaryKey]
 	if !pkExists || pkValue == nil {
-		return "", false
+		return PrimaryKey{}, false
 	}
-	pkValueStr := convertValueToString(pkValue)
-	if pkValueStr == "" {
-		return "", false
+	pk := NewPrimaryKey(pkValue)
+	if pk.Str == "" {
+		return PrimaryKey{}, false
 	}
-	return pkValueStr, true
+	return pk, true
 }
 
 // compareRecords compares two records and returns true if they differ
@@ -681,14 +726,14 @@ func processFileRecords(fileRecords []DataRecord, dbRecords map[string]DataRecor
 	fileKeys := make(map[string]bool)
 
 	for _, fileRecord := range fileRecords {
-		pkValueStr, isValid := extractPrimaryKeyValue(fileRecord, config.Sync.PrimaryKey)
+		pk, isValid := extractPrimaryKeyValue(fileRecord, config.Sync.PrimaryKey)
 		if !isValid {
 			log.Printf("Warning: Record in file is missing primary key '%s' value or key itself. Skipping: %v", config.Sync.PrimaryKey, fileRecord)
 			continue
 		}
-		fileKeys[pkValueStr] = true
+		fileKeys[pk.Str] = true
 
-		dbRecord, existsInDB := dbRecords[pkValueStr]
+		dbRecord, existsInDB := dbRecords[pk.Str]
 		if !existsInDB {
 			toInsert = append(toInsert, fileRecord)
 		} else if compareRecords(fileRecord, dbRecord, actualSyncCols, config.Sync.PrimaryKey) {
@@ -709,8 +754,8 @@ func findRecordsToDelete(dbRecords map[string]DataRecord, fileKeys map[string]bo
 	}
 
 	var toDelete []DataRecord
-	for pkValue, dbRecord := range dbRecords {
-		if !fileKeys[pkValue] {
+	for pkStr, dbRecord := range dbRecords {
+		if !fileKeys[pkStr] {
 			toDelete = append(toDelete, dbRecord)
 		}
 	}
