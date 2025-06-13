@@ -1082,7 +1082,6 @@ func TestConvertValueToString(t *testing.T) {
 			})
 		}
 	})
-
 }
 
 func TestDetermineActualSyncColumns(t *testing.T) {
