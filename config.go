@@ -12,7 +12,7 @@ type DBConfig struct {
 	DSN string `yaml:"dsn"` // Data Source Name (example: "user:password@tcp(127.0.0.1:3306)/dbname")
 }
 
-// SyncConfig represents data synchronization settings
+// SyncConfig represents data synchronization settings (legacy single table config)
 type SyncConfig struct {
 	FilePath         string   `yaml:"filePath"`         // Input file path
 	TableName        string   `yaml:"tableName"`        // Target table name
@@ -24,11 +24,25 @@ type SyncConfig struct {
 	DeleteNotInFile  bool     `yaml:"deleteNotInFile"`  // Whether to delete records not in file when using diff mode
 }
 
+// TableSyncConfig represents synchronization settings for a single table
+type TableSyncConfig struct {
+	Name             string   `yaml:"name"`             // Target table name
+	FilePath         string   `yaml:"filePath"`         // Input file path
+	Columns          []string `yaml:"columns"`          // DB column names corresponding to file columns (order is important)
+	TimestampColumns []string `yaml:"timestampColumns"` // Column names to set current timestamp on insert/update
+	ImmutableColumns []string `yaml:"immutableColumns"` // Column names that should not be updated in diff mode
+	PrimaryKey       string   `yaml:"primaryKey"`       // Primary key column name (required for differential update)
+	SyncMode         string   `yaml:"syncMode"`         // "overwrite" or "diff" (differential)
+	DeleteNotInFile  bool     `yaml:"deleteNotInFile"`  // Whether to delete records not in file when using diff mode
+	Dependencies     []string `yaml:"dependencies"`     // List of table names this table depends on (foreign key parents)
+}
+
 // Config represents configuration information
 type Config struct {
-	DB     DBConfig   `yaml:"db"`
-	Sync   SyncConfig `yaml:"sync"`
-	DryRun bool       `yaml:"dryRun"` // Enable dry-run mode
+	DB     DBConfig          `yaml:"db"`
+	Sync   SyncConfig        `yaml:"sync"`                      // Legacy single table sync config (for backward compatibility)
+	Tables []TableSyncConfig `yaml:"tables,omitempty"`          // Multi-table sync config
+	DryRun bool              `yaml:"dryRun"`                    // Enable dry-run mode
 }
 
 // NewDefaultConfig returns a Config struct with default values
@@ -121,7 +135,18 @@ func ValidateConfig(cfg Config) error {
 		return fmt.Errorf("database DSN is required")
 	}
 
-	// Check Sync configuration
+	// Check if using multi-table sync or legacy single table sync
+	if len(cfg.Tables) > 0 {
+		// Multi-table sync validation
+		return validateMultiTableConfig(cfg)
+	} else {
+		// Legacy single table sync validation
+		return validateSingleTableConfig(cfg)
+	}
+}
+
+// validateSingleTableConfig validates legacy single table configuration
+func validateSingleTableConfig(cfg Config) error {
 	if cfg.Sync.FilePath == "" {
 		return fmt.Errorf("sync file path is required")
 	}
@@ -135,6 +160,108 @@ func ValidateConfig(cfg Config) error {
 	if cfg.Sync.SyncMode == "diff" && cfg.Sync.PrimaryKey == "" {
 		return fmt.Errorf("primary key is required for diff sync mode")
 	}
+	return nil
+}
 
+// validateMultiTableConfig validates multi-table configuration
+func validateMultiTableConfig(cfg Config) error {
+	if len(cfg.Tables) == 0 {
+		return fmt.Errorf("at least one table configuration is required in tables array")
+	}
+
+	tableNames := make(map[string]bool)
+	for i, table := range cfg.Tables {
+		// Check required fields
+		if table.Name == "" {
+			return fmt.Errorf("table[%d]: table name is required", i)
+		}
+		if table.FilePath == "" {
+			return fmt.Errorf("table[%d] (%s): file path is required", i, table.Name)
+		}
+		if table.SyncMode != "overwrite" && table.SyncMode != "diff" {
+			return fmt.Errorf("table[%d] (%s): sync mode must be either 'overwrite' or 'diff'", i, table.Name)
+		}
+		if table.SyncMode == "diff" && table.PrimaryKey == "" {
+			return fmt.Errorf("table[%d] (%s): primary key is required for diff sync mode", i, table.Name)
+		}
+
+		// Check for duplicate table names
+		if tableNames[table.Name] {
+			return fmt.Errorf("table[%d]: duplicate table name '%s'", i, table.Name)
+		}
+		tableNames[table.Name] = true
+
+		// Validate dependencies exist in the configuration
+		for _, dep := range table.Dependencies {
+			if !tableNames[dep] && !hasTableName(cfg.Tables[:i], dep) {
+				return fmt.Errorf("table[%d] (%s): dependency '%s' not found in configuration", i, table.Name, dep)
+			}
+		}
+	}
+
+	// Check for circular dependencies
+	if err := validateNoCycles(cfg.Tables); err != nil {
+		return fmt.Errorf("circular dependency detected: %w", err)
+	}
+
+	return nil
+}
+
+// hasTableName checks if a table name exists in the given slice
+func hasTableName(tables []TableSyncConfig, name string) bool {
+	for _, table := range tables {
+		if table.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// validateNoCycles performs topological sort to detect circular dependencies
+func validateNoCycles(tables []TableSyncConfig) error {
+	// Build adjacency list for dependency graph
+	graph := make(map[string][]string)
+	inDegree := make(map[string]int)
+	
+	// Initialize all tables
+	for _, table := range tables {
+		graph[table.Name] = []string{}
+		inDegree[table.Name] = 0
+	}
+	
+	// Build dependency edges
+	for _, table := range tables {
+		for _, dep := range table.Dependencies {
+			graph[dep] = append(graph[dep], table.Name)
+			inDegree[table.Name]++
+		}
+	}
+	
+	// Kahn's algorithm for cycle detection
+	queue := []string{}
+	for tableName, degree := range inDegree {
+		if degree == 0 {
+			queue = append(queue, tableName)
+		}
+	}
+	
+	processed := 0
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		processed++
+		
+		for _, neighbor := range graph[current] {
+			inDegree[neighbor]--
+			if inDegree[neighbor] == 0 {
+				queue = append(queue, neighbor)
+			}
+		}
+	}
+	
+	if processed != len(tables) {
+		return fmt.Errorf("circular dependency exists in table configuration")
+	}
+	
 	return nil
 }
