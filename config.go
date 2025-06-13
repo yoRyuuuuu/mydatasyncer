@@ -265,3 +265,83 @@ func validateNoCycles(tables []TableSyncConfig) error {
 	
 	return nil
 }
+
+// GetSyncOrder determines the order of table synchronization based on dependencies
+// Returns two slices: insertOrder (parent->child) and deleteOrder (child->parent)
+func GetSyncOrder(tables []TableSyncConfig) (insertOrder []string, deleteOrder []string, err error) {
+	if len(tables) == 0 {
+		return nil, nil, fmt.Errorf("no tables provided")
+	}
+
+	// Build adjacency list for dependency graph
+	graph := make(map[string][]string)
+	inDegree := make(map[string]int)
+	
+	// Initialize all tables
+	for _, table := range tables {
+		graph[table.Name] = []string{}
+		inDegree[table.Name] = 0
+	}
+	
+	// Build dependency edges (parent -> child)
+	for _, table := range tables {
+		for _, dep := range table.Dependencies {
+			graph[dep] = append(graph[dep], table.Name)
+			inDegree[table.Name]++
+		}
+	}
+	
+	// Kahn's algorithm for topological sorting
+	queue := []string{}
+	for tableName, degree := range inDegree {
+		if degree == 0 {
+			queue = append(queue, tableName)
+		}
+	}
+	
+	var sortedOrder []string
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		sortedOrder = append(sortedOrder, current)
+		
+		for _, neighbor := range graph[current] {
+			inDegree[neighbor]--
+			if inDegree[neighbor] == 0 {
+				queue = append(queue, neighbor)
+			}
+		}
+	}
+	
+	// Check if all tables were processed (no cycles)
+	if len(sortedOrder) != len(tables) {
+		return nil, nil, fmt.Errorf("circular dependency detected, cannot determine sync order")
+	}
+	
+	// Insert order: parent -> child (same as topological order)
+	insertOrder = make([]string, len(sortedOrder))
+	copy(insertOrder, sortedOrder)
+	
+	// Delete order: child -> parent (reverse of topological order)
+	deleteOrder = make([]string, len(sortedOrder))
+	for i, table := range sortedOrder {
+		deleteOrder[len(sortedOrder)-1-i] = table
+	}
+	
+	return insertOrder, deleteOrder, nil
+}
+
+// GetTableConfig returns the configuration for a specific table by name
+func GetTableConfig(tables []TableSyncConfig, tableName string) (*TableSyncConfig, error) {
+	for _, table := range tables {
+		if table.Name == tableName {
+			return &table, nil
+		}
+	}
+	return nil, fmt.Errorf("table configuration not found for '%s'", tableName)
+}
+
+// IsMultiTableConfig returns true if the config uses multi-table configuration
+func IsMultiTableConfig(cfg Config) bool {
+	return len(cfg.Tables) > 0
+}

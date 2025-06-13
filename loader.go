@@ -190,3 +190,78 @@ func GetLoader(filePath string) (Loader, error) {
 		return nil, fmt.Errorf("unsupported file type: '%s'. Only .csv and .json are supported", ext)
 	}
 }
+
+// MultiTableData represents data loaded from multiple files, keyed by table name
+type MultiTableData map[string][]DataRecord
+
+// MultiTableLoader handles loading data from multiple files for multi-table synchronization
+type MultiTableLoader struct {
+	TableConfigs []TableSyncConfig
+}
+
+// NewMultiTableLoader creates a new multi-table loader instance
+func NewMultiTableLoader(tableConfigs []TableSyncConfig) *MultiTableLoader {
+	return &MultiTableLoader{
+		TableConfigs: tableConfigs,
+	}
+}
+
+// LoadAll loads data from all configured table files
+// Returns a map where keys are table names and values are the loaded records
+func (ml *MultiTableLoader) LoadAll() (MultiTableData, error) {
+	if len(ml.TableConfigs) == 0 {
+		return nil, fmt.Errorf("no table configurations provided")
+	}
+
+	result := make(MultiTableData)
+	
+	for _, tableConfig := range ml.TableConfigs {
+		// Create appropriate loader for each file
+		loader, err := GetLoader(tableConfig.FilePath)
+		if err != nil {
+			return nil, fmt.Errorf("error creating loader for table '%s' file '%s': %w", tableConfig.Name, tableConfig.FilePath, err)
+		}
+		
+		// Load data from the file
+		records, err := loader.Load(tableConfig.Columns)
+		if err != nil {
+			return nil, fmt.Errorf("error loading data for table '%s' from file '%s': %w", tableConfig.Name, tableConfig.FilePath, err)
+		}
+		
+		// Store the loaded records mapped by table name
+		result[tableConfig.Name] = records
+	}
+	
+	return result, nil
+}
+
+// LoadForTable loads data for a specific table by name
+func (ml *MultiTableLoader) LoadForTable(tableName string) ([]DataRecord, error) {
+	for _, tableConfig := range ml.TableConfigs {
+		if tableConfig.Name == tableName {
+			loader, err := GetLoader(tableConfig.FilePath)
+			if err != nil {
+				return nil, fmt.Errorf("error creating loader for table '%s' file '%s': %w", tableConfig.Name, tableConfig.FilePath, err)
+			}
+			
+			records, err := loader.Load(tableConfig.Columns)
+			if err != nil {
+				return nil, fmt.Errorf("error loading data for table '%s' from file '%s': %w", tableConfig.Name, tableConfig.FilePath, err)
+			}
+			
+			return records, nil
+		}
+	}
+	
+	return nil, fmt.Errorf("table configuration not found for '%s'", tableName)
+}
+
+// ValidateFilePaths checks if all configured file paths exist and are readable
+func (ml *MultiTableLoader) ValidateFilePaths() error {
+	for _, tableConfig := range ml.TableConfigs {
+		if _, err := os.Stat(tableConfig.FilePath); os.IsNotExist(err) {
+			return fmt.Errorf("file does not exist for table '%s': %s", tableConfig.Name, tableConfig.FilePath)
+		}
+	}
+	return nil
+}
