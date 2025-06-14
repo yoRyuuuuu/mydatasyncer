@@ -1,0 +1,31 @@
+db:
+  dsn: "user:password@tcp(127.0.0.1:3306)/testdb"
+
+tables:
+  - name: "categories"
+    filePath: "testdata/e2e_categories.json"
+    primaryKey: "id"
+    syncMode: "diff"
+    deleteNotInFile: true
+    dependencies: []
+    
+  - name: "products"
+    filePath: "testdata/e2e_products.csv"  
+    primaryKey: "id"
+    syncMode: "diff"
+    deleteNotInFile: true
+    dependencies: ["categories"]
+    
+  - name: "orders"
+    filePath: "testdata/e2e_orders.json"
+    primaryKey: "id"
+    syncMode: "diff"
+    deleteNotInFile: true
+    dependencies: ["categories"]
+    
+  - name: "order_items"
+    filePath: "testdata/e2e_order_items.csv"
+    primaryKey: "id"  
+    syncMode: "diff"
+    deleteNotInFile: true
+    dependencies: ["orders", "products"]
