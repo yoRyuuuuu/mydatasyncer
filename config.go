@@ -147,6 +147,7 @@ func ValidateConfig(cfg Config) error {
 
 // validateSingleTableConfig validates legacy single table configuration
 func validateSingleTableConfig(cfg Config) error {
+	// Check Sync configuration
 	if cfg.Sync.FilePath == "" {
 		return fmt.Errorf("sync file path is required")
 	}
