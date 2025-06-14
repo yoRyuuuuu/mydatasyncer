@@ -75,7 +75,7 @@ func TestCSVLoader_Load_Success(t *testing.T) {
 				loader.WithDelimiter(tt.delimiter)
 			}
 
-			// CSVLoader.Load ignores its argument.
+			// CSVLoader.Load uses nil/empty to load all columns.
 			records, err := loader.Load(nil)
 			if err != nil {
 				t.Fatalf("Load() error = %v", err)
@@ -288,14 +288,15 @@ func TestJSONLoader_Load_Error(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var filePath string
-			if tt.name == "file not found" {
+			switch tt.name {
+			case "file not found":
 				filePath = filepath.Join(t.TempDir(), "non_existent_file.json")
-			} else if tt.name == "empty file" {
+			case "empty file":
 				// Create an actual empty file for this specific test case
 				filePath = createTempJSON(t, "test_error.json", "")
 				// For other error cases, createTempJSON will handle content.
 				// The "empty file" check in JSONLoader.Load happens after os.ReadFile but before json.Unmarshal.
-			} else {
+			default:
 				filePath = createTempJSON(t, "test_error.json", tt.jsonContent)
 			}
 
@@ -315,7 +316,7 @@ func TestGetLoader(t *testing.T) {
 	tests := []struct {
 		name         string
 		filePath     string
-		expectedType interface{}
+		expectedType any
 		expectError  bool
 	}{
 		{
@@ -448,7 +449,7 @@ func TestCSVLoader_Load_Error(t *testing.T) {
 				loader.WithDelimiter(tt.delimiter)
 			}
 
-			// CSVLoader.Load ignores its argument.
+			// CSVLoader.Load uses nil/empty to load all columns.
 			_, err := loader.Load(nil)
 			if err == nil {
 				t.Fatalf("Load() expected error, got nil")
@@ -492,21 +493,18 @@ func TestCSVLoader_AdditionalErrorCases(t *testing.T) {
 
 	t.Run("csv readall error handling", func(t *testing.T) {
 		// This tests the error handling for csv.ReadAll on line 97-100 in loader.go
-		csvContent := `id,name,value
-1,productA
-2,productB,200,extra`
-		filePath := createTempCSV(t, "column_mismatch.csv", csvContent)
+		csvContent := "id,name,value\n1,\"unclosed quote,value\n2,productB,200"
+		filePath := createTempCSV(t, "malformed.csv", csvContent)
 		
 		loader := NewCSVLoader(filePath)
 		_, err := loader.Load(nil)
 		
 		if err == nil {
-			t.Fatalf("Expected error for column count mismatch, got nil")
+			t.Fatalf("Expected error for malformed CSV, got nil")
 		}
-		// The error comes from csv.ReadAll, not the custom check in loader.go
-		// csv.ReadAll fails with "wrong number of fields" before reaching the custom check
-		if !strings.Contains(err.Error(), "wrong number of fields") || !strings.Contains(err.Error(), "error reading CSV data rows") {
-			t.Errorf("Expected CSV reading error with wrong number of fields, got: %v", err)
+		// Verify the error is related to CSV reading
+		if !strings.Contains(err.Error(), "error reading CSV data rows") {
+			t.Errorf("Expected CSV reading error, got: %v", err)
 		}
 	})
 
@@ -597,4 +595,255 @@ func TestCSVLoader_AdditionalErrorCases(t *testing.T) {
 			t.Errorf("Expected 0 records for header-only file, got: %d", len(records))
 		}
 	})
+}
+
+// Multi-table loader tests
+func TestMultiTableLoader_LoadAll(t *testing.T) {
+	tests := []struct {
+		name        string
+		tableConfigs []TableSyncConfig
+		fileContents map[string]string // file name -> content
+		expected     MultiTableData
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "Load multiple CSV files successfully",
+			tableConfigs: []TableSyncConfig{
+				{Name: "users", FilePath: "users.csv"},
+				{Name: "orders", FilePath: "orders.csv"},
+			},
+			fileContents: map[string]string{
+				"users.csv": "id,name,email\n1,Alice,alice@example.com\n2,Bob,bob@example.com",
+				"orders.csv": "id,user_id,amount\n1,1,100.50\n2,2,75.25",
+			},
+			expected: MultiTableData{
+				"users": []DataRecord{
+					{"id": "1", "name": "Alice", "email": "alice@example.com"},
+					{"id": "2", "name": "Bob", "email": "bob@example.com"},
+				},
+				"orders": []DataRecord{
+					{"id": "1", "user_id": "1", "amount": "100.50"},
+					{"id": "2", "user_id": "2", "amount": "75.25"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Load multiple JSON files successfully",
+			tableConfigs: []TableSyncConfig{
+				{Name: "categories", FilePath: "categories.json"},
+				{Name: "products", FilePath: "products.json"},
+			},
+			fileContents: map[string]string{
+				"categories.json": `[{"id": 1, "name": "Electronics"}, {"id": 2, "name": "Books"}]`,
+				"products.json": `[{"id": 1, "name": "Laptop", "category_id": 1}, {"id": 2, "name": "Novel", "category_id": 2}]`,
+			},
+			expected: MultiTableData{
+				"categories": []DataRecord{
+					{"id": float64(1), "name": "Electronics"},
+					{"id": float64(2), "name": "Books"},
+				},
+				"products": []DataRecord{
+					{"id": float64(1), "name": "Laptop", "category_id": float64(1)},
+					{"id": float64(2), "name": "Novel", "category_id": float64(2)},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Mixed CSV and JSON files",
+			tableConfigs: []TableSyncConfig{
+				{Name: "users", FilePath: "users.csv", Columns: []string{"id", "name"}},
+				{Name: "profiles", FilePath: "profiles.json", Columns: []string{"user_id", "bio"}},
+			},
+			fileContents: map[string]string{
+				"users.csv": "id,name,email\n1,Alice,alice@example.com\n2,Bob,bob@example.com",
+				"profiles.json": `[{"user_id": 1, "bio": "Software Developer", "age": 30}, {"user_id": 2, "bio": "Designer", "age": 25}]`,
+			},
+			expected: MultiTableData{
+				"users": []DataRecord{
+					{"id": "1", "name": "Alice"},
+					{"id": "2", "name": "Bob"},
+				},
+				"profiles": []DataRecord{
+					{"user_id": float64(1), "bio": "Software Developer"},
+					{"user_id": float64(2), "bio": "Designer"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name:         "No table configurations",
+			tableConfigs: []TableSyncConfig{},
+			fileContents: map[string]string{},
+			wantErr:      true,
+			errContains:  "no table configurations provided",
+		},
+		{
+			name: "Invalid file format",
+			tableConfigs: []TableSyncConfig{
+				{Name: "users", FilePath: "users.txt"},
+			},
+			fileContents: map[string]string{
+				"users.txt": "invalid content",
+			},
+			wantErr:     true,
+			errContains: "unsupported file type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			
+			// Create temporary files
+			for filename, content := range tt.fileContents {
+				filePath := filepath.Join(tempDir, filename)
+				err := os.WriteFile(filePath, []byte(content), 0644)
+				if err != nil {
+					t.Fatalf("Failed to create temp file %s: %v", filename, err)
+				}
+			}
+
+			// Update file paths in table configs to point to temp directory
+			configs := make([]TableSyncConfig, len(tt.tableConfigs))
+			for i, config := range tt.tableConfigs {
+				configs[i] = config
+				configs[i].FilePath = filepath.Join(tempDir, config.FilePath)
+			}
+
+			loader := NewMultiTableLoader(configs)
+			result, err := loader.LoadAll()
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("LoadAll() expected error but got nil")
+					return
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("LoadAll() error = %v, want error containing %v", err, tt.errContains)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("LoadAll() unexpected error = %v", err)
+				return
+			}
+
+			if !reflect.DeepEqual(result, tt.expected) {
+				t.Errorf("LoadAll() result = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestMultiTableLoader_LoadForTable(t *testing.T) {
+	tempDir := t.TempDir()
+	
+	// Create test files
+	usersFile := filepath.Join(tempDir, "users.csv")
+	err := os.WriteFile(usersFile, []byte("id,name\n1,Alice\n2,Bob"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create users.csv: %v", err)
+	}
+
+	ordersFile := filepath.Join(tempDir, "orders.json")
+	err = os.WriteFile(ordersFile, []byte(`[{"id": 1, "user_id": 1, "amount": 100}]`), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create orders.json: %v", err)
+	}
+
+	configs := []TableSyncConfig{
+		{Name: "users", FilePath: usersFile},
+		{Name: "orders", FilePath: ordersFile},
+	}
+
+	loader := NewMultiTableLoader(configs)
+
+	t.Run("Load existing table", func(t *testing.T) {
+		records, err := loader.LoadForTable("users")
+		if err != nil {
+			t.Errorf("LoadForTable() unexpected error = %v", err)
+			return
+		}
+
+		expected := []DataRecord{
+			{"id": "1", "name": "Alice"},
+			{"id": "2", "name": "Bob"},
+		}
+
+		if !reflect.DeepEqual(records, expected) {
+			t.Errorf("LoadForTable() result = %v, want %v", records, expected)
+		}
+	})
+
+	t.Run("Load non-existing table", func(t *testing.T) {
+		_, err := loader.LoadForTable("nonexistent")
+		if err == nil {
+			t.Errorf("LoadForTable() expected error for non-existing table")
+			return
+		}
+
+		if !strings.Contains(err.Error(), "table configuration not found") {
+			t.Errorf("LoadForTable() error = %v, want error containing 'table configuration not found'", err)
+		}
+	})
+}
+
+func TestMultiTableLoader_ValidateFilePaths(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create one valid file
+	validFile := filepath.Join(tempDir, "valid.csv")
+	err := os.WriteFile(validFile, []byte("id,name\n1,test"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create valid file: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		configs     []TableSyncConfig
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "All files exist",
+			configs: []TableSyncConfig{
+				{Name: "valid", FilePath: validFile},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Some files missing",
+			configs: []TableSyncConfig{
+				{Name: "valid", FilePath: validFile},
+				{Name: "missing", FilePath: filepath.Join(tempDir, "missing.csv")},
+			},
+			wantErr:     true,
+			errContains: "file does not exist for table 'missing'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loader := NewMultiTableLoader(tt.configs)
+			err := loader.ValidateFilePaths()
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ValidateFilePaths() expected error but got nil")
+					return
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("ValidateFilePaths() error = %v, want error containing %v", err, tt.errContains)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateFilePaths() unexpected error = %v", err)
+				}
+			}
+		})
+	}
 }

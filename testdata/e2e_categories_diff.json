@@ -1,0 +1,12 @@
+[
+  {
+    "id": 1,
+    "name": "Electronics",
+    "description": "Updated: Electronic products and gadgets"
+  },
+  {
+    "id": 3,
+    "name": "Home & Garden",
+    "description": "Home and garden products"
+  }
+]

@@ -81,17 +81,25 @@ func RunApp(configPath string, dryRun bool) error {
 	}
 	log.Println("Database connection successful")
 
-	// 3. File loading and parsing
-	records, err := loadDataFromFile(&config)
-	if err != nil {
-		return fmt.Errorf("file reading error: %w", err)
-	}
-	log.Printf("Loaded %d records from file.", len(records))
+	// 3. Check configuration type and execute appropriate synchronization
+	if IsMultiTableConfig(config) {
+		// Multi-table synchronization
+		err = syncMultipleTablesData(ctx, db, config)
+		if err != nil {
+			return fmt.Errorf("multi-table data synchronization error: %w", err)
+		}
+	} else {
+		// Legacy single table synchronization
+		records, err := loadDataFromFile(&config)
+		if err != nil {
+			return fmt.Errorf("file reading error: %w", err)
+		}
+		log.Printf("Loaded %d records from file.", len(records))
 
-	// 4. Synchronization process - now uses the function from dbsync.go
-	err = syncData(ctx, db, config, records)
-	if err != nil {
-		return fmt.Errorf("data synchronization error: %w", err)
+		err = syncData(ctx, db, config, records)
+		if err != nil {
+			return fmt.Errorf("data synchronization error: %w", err)
+		}
 	}
 
 	log.Println("Data synchronization completed successfully.")

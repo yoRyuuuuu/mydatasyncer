@@ -1,0 +1,15 @@
+db:
+  dsn: "user:password@tcp(127.0.0.1:3306)/testdb"
+
+tables:
+  - name: "categories"
+    filePath: "testdata/e2e_categories_updated.json"
+    primaryKey: "id"
+    syncMode: "overwrite"
+    dependencies: []
+
+  - name: "products"
+    filePath: "testdata/e2e_products_updated.csv"
+    primaryKey: "id"
+    syncMode: "overwrite"
+    dependencies: ["categories"]
