@@ -4,4 +4,4 @@
     "name": "Invalid User",
     "email": "invalid@example.com"
   }
-]
+  // This is invalid JSON due to missing comma and comment
