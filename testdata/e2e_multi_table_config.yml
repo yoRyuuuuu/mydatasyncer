@@ -8,24 +8,24 @@ tables:
     syncMode: "diff"
     deleteNotInFile: true
     dependencies: []
-    
+
   - name: "products"
-    filePath: "testdata/e2e_products.csv"  
+    filePath: "testdata/e2e_products.csv"
     primaryKey: "id"
     syncMode: "diff"
     deleteNotInFile: true
     dependencies: ["categories"]
-    
+
   - name: "orders"
     filePath: "testdata/e2e_orders.json"
     primaryKey: "id"
     syncMode: "diff"
     deleteNotInFile: true
     dependencies: ["categories"]
-    
+
   - name: "order_items"
     filePath: "testdata/e2e_order_items.csv"
-    primaryKey: "id"  
+    primaryKey: "id"
     syncMode: "diff"
     deleteNotInFile: true
     dependencies: ["orders", "products"]

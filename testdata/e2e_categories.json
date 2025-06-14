@@ -1,4 +1,12 @@
 [
-  {"id": 1, "name": "Electronics", "description": "Electronic products"},
-  {"id": 2, "name": "Books", "description": "Books and literature"}
+  {
+    "id": 1,
+    "name": "Electronics",
+    "description": "Electronic products"
+  },
+  {
+    "id": 2,
+    "name": "Books",
+    "description": "Books and literature"
+  }
 ]

@@ -9,18 +9,16 @@ sync:
   timestampColumns: ["created_at", "updated_at"]
   immutableColumns: ["created_at"]
   columns:
-    [
-      "id",
-      "string_col",
-      "bool_true_col",
-      "bool_false_col",
-      "int_col",
-      "float_col",
-      "large_int_col",
-      "zero_col",
-      "negative_int_col",
-      "negative_float_col",
-      "whole_number_float",
-      "null_col",
-      "rfc3339_time",
-    ]
+    - "id"
+    - "string_col"
+    - "bool_true_col"
+    - "bool_false_col"
+    - "int_col"
+    - "float_col"
+    - "large_int_col"
+    - "zero_col"
+    - "negative_int_col"
+    - "negative_float_col"
+    - "whole_number_float"
+    - "null_col"
+    - "rfc3339_time"
