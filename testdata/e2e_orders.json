@@ -1,4 +1,14 @@
 [
-  {"id": 1, "customer_id": 101, "total": 1349.98, "status": "completed"},
-  {"id": 2, "customer_id": 102, "total": 49.99, "status": "pending"}
+  {
+    "id": 1,
+    "customer_id": 101,
+    "total": 1349.98,
+    "status": "completed"
+  },
+  {
+    "id": 2,
+    "customer_id": 102,
+    "total": 49.99,
+    "status": "pending"
+  }
 ]

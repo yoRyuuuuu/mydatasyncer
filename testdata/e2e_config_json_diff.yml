@@ -1,5 +1,6 @@
 db:
   dsn: "user:password@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+
 sync:
   filePath: "testdata/e2e_data_diff.json"
   tableName: "test_table"

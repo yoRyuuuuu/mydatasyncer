@@ -7,9 +7,9 @@ tables:
     primaryKey: "id"
     syncMode: "overwrite"
     dependencies: []
-    
+
   - name: "products"
-    filePath: "testdata/e2e_products_updated.csv"  
+    filePath: "testdata/e2e_products_updated.csv"
     primaryKey: "id"
     syncMode: "overwrite"
     dependencies: ["categories"]

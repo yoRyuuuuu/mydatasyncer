@@ -1,4 +1,12 @@
 [
-  {"id": 3, "name": "Home & Garden", "description": "Home and garden products"},
-  {"id": 4, "name": "Sports", "description": "Sports equipment"}
+  {
+    "id": 3,
+    "name": "Home & Garden",
+    "description": "Home and garden products"
+  },
+  {
+    "id": 4,
+    "name": "Sports",
+    "description": "Sports equipment"
+  }
 ]

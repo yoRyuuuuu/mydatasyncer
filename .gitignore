@@ -1,2 +1,5 @@
 mydatasyncer
 coverage.out
+
+# Planning documents (local development only)
+*_plan.md

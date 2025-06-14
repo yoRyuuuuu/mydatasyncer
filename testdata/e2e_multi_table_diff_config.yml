@@ -8,9 +8,9 @@ tables:
     syncMode: "diff"
     deleteNotInFile: true
     dependencies: []
-    
+
   - name: "products"
-    filePath: "testdata/e2e_products_diff.csv"  
+    filePath: "testdata/e2e_products_diff.csv"
     primaryKey: "id"
     syncMode: "diff"
     deleteNotInFile: true
