@@ -574,6 +574,156 @@ func TestDiffData(t *testing.T) {
 	}
 }
 
+func TestDiffDataErrorCases(t *testing.T) {
+	t.Run("empty primary key returns empty results", func(t *testing.T) {
+		config := createTestConfig()
+		config.Sync.PrimaryKey = "" // Empty primary key
+
+		fileRecords := []DataRecord{
+			{"id": "1", "name": "test1", "value": "value1"},
+		}
+
+		dbRecords := map[string]DataRecord{
+			"1": {"id": "1", "name": "test1", "value": "value1"},
+		}
+
+		actualSyncCols := config.Sync.Columns
+		toInsert, toUpdate, toDelete := diffData(config, fileRecords, dbRecords, actualSyncCols)
+
+		// Should return empty slices when primary key is empty
+		if len(toInsert) != 0 {
+			t.Errorf("Expected empty insert slice, got %d items", len(toInsert))
+		}
+		if len(toUpdate) != 0 {
+			t.Errorf("Expected empty update slice, got %d items", len(toUpdate))
+		}
+		if len(toDelete) != 0 {
+			t.Errorf("Expected empty delete slice, got %d items", len(toDelete))
+		}
+	})
+}
+
+func TestSyncDataEmptyFile(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	t.Run("diff mode without deleteNotInFile with empty file", func(t *testing.T) {
+		cleanupTestData(t, db)
+		config := createTestConfig()
+		config.Sync.SyncMode = "diff"
+		config.Sync.DeleteNotInFile = false
+
+		// Insert some initial data
+		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)", "1", "test1", "value1")
+		if err != nil {
+			t.Fatalf("Failed to insert test data: %v", err)
+		}
+
+		// Empty file records
+		fileRecords := []DataRecord{}
+
+		err = syncData(context.Background(), db, config, fileRecords)
+		if err != nil {
+			t.Fatalf("syncData failed: %v", err)
+		}
+
+		// Data should remain unchanged
+		rows, err := db.Query("SELECT COUNT(*) FROM test_table")
+		if err != nil {
+			t.Fatalf("Failed to query count: %v", err)
+		}
+		defer rows.Close()
+
+		var count int
+		if rows.Next() {
+			if err := rows.Scan(&count); err != nil {
+				t.Fatalf("Failed to scan count: %v", err)
+			}
+		}
+
+		if count != 1 {
+			t.Errorf("Expected 1 record to remain, got %d", count)
+		}
+	})
+
+	t.Run("diff mode with deleteNotInFile and empty file", func(t *testing.T) {
+		cleanupTestData(t, db)
+		config := createTestConfig()
+		config.Sync.SyncMode = "diff"
+		config.Sync.DeleteNotInFile = true
+
+		// Insert some initial data
+		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)", "1", "test1", "value1")
+		if err != nil {
+			t.Fatalf("Failed to insert test data: %v", err)
+		}
+
+		// Empty file records
+		fileRecords := []DataRecord{}
+
+		err = syncData(context.Background(), db, config, fileRecords)
+		if err != nil {
+			t.Fatalf("syncData failed: %v", err)
+		}
+
+		// All data should be deleted
+		rows, err := db.Query("SELECT COUNT(*) FROM test_table")
+		if err != nil {
+			t.Fatalf("Failed to query count: %v", err)
+		}
+		defer rows.Close()
+
+		var count int
+		if rows.Next() {
+			if err := rows.Scan(&count); err != nil {
+				t.Fatalf("Failed to scan count: %v", err)
+			}
+		}
+
+		if count != 0 {
+			t.Errorf("Expected 0 records after delete, got %d", count)
+		}
+	})
+
+	t.Run("overwrite mode with empty file", func(t *testing.T) {
+		cleanupTestData(t, db)
+		config := createTestConfig()
+		config.Sync.SyncMode = "overwrite"
+
+		// Insert some initial data
+		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)", "1", "test1", "value1")
+		if err != nil {
+			t.Fatalf("Failed to insert test data: %v", err)
+		}
+
+		// Empty file records
+		fileRecords := []DataRecord{}
+
+		err = syncData(context.Background(), db, config, fileRecords)
+		if err != nil {
+			t.Fatalf("syncData failed: %v", err)
+		}
+
+		// All data should be deleted in overwrite mode
+		rows, err := db.Query("SELECT COUNT(*) FROM test_table")
+		if err != nil {
+			t.Fatalf("Failed to query count: %v", err)
+		}
+		defer rows.Close()
+
+		var count int
+		if rows.Next() {
+			if err := rows.Scan(&count); err != nil {
+				t.Fatalf("Failed to scan count: %v", err)
+			}
+		}
+
+		if count != 0 {
+			t.Errorf("Expected 0 records after overwrite, got %d", count)
+		}
+	})
+}
+
 func TestDryRunOverwriteMode(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
@@ -905,6 +1055,29 @@ func TestConvertValueToString(t *testing.T) {
 				result := convertValueToString(tt.value)
 				if result != tt.expected {
 					t.Errorf("Expected %q, got %q", tt.expected, result)
+				}
+			})
+		}
+	})
+
+	t.Run("default case fallback", func(t *testing.T) {
+		// Test types that don't match any specific case and fall through to default
+		tests := []struct {
+			name          string
+			value         any
+			expectContains string
+		}{
+			{"pointer to string", func() *string { s := "test"; return &s }(), "0x"},
+			{"channel", make(chan int), "0x"},
+			{"function", func() int { return 42 }, "0x"},
+			{"struct", struct{ Name string }{Name: "test"}, "test"},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result := convertValueToString(tt.value)
+				if !strings.Contains(result, tt.expectContains) {
+					t.Errorf("Expected result to contain %q, got %q", tt.expectContains, result)
 				}
 			})
 		}

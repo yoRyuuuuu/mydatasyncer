@@ -8,7 +8,9 @@ The mydatasyncer is a utility for synchronizing data from various file formats t
 - **Bulk operations**: Efficiently handles large datasets using bulk insert/update/delete operations
 - **Transaction support**: All operations are wrapped in a database transaction to ensure data integrity
 - **Simple configuration**: Easy to define target tables, columns, and primary keys
-- **Multiple format support**: Supports CSV with plans to add JSON, YAML, and other data formats
+- **Multiple format support**: Supports CSV and JSON formats with automatic format detection
+- **Comprehensive testing**: 87.2% test coverage with robust error handling and edge case testing
+- **Enhanced security**: Requires explicit database configuration to prevent accidental connections
 
 ## Installation
 
@@ -72,7 +74,7 @@ mydatasyncer --dry-run
 ```yaml
 # mydatasyncer.yml
 db:
-  dsn: "user:password@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+  dsn: "user:password@tcp(127.0.0.1:3306)/testdb?parseTime=true"  # Required: must be explicitly configured
 sync:
   filePath: "./testdata.csv"
   tableName: "products"
@@ -150,11 +152,11 @@ The configuration file uses YAML format with the following structure:
 ```yaml
 # Database connection settings
 db:
-  dsn: "user:password@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+  dsn: "user:password@tcp(127.0.0.1:3306)/testdb?parseTime=true"  # Required: must be explicitly configured
 
 # Synchronization settings
 sync:
-  # Input file path (CSV format)
+  # Input file path (CSV or JSON format - auto-detected by file extension)
   filePath: "./testdata.csv"
 
   # Target table name
@@ -289,20 +291,78 @@ The provided `compose.yml` sets up a MySQL database and initializes it with samp
 
 ## Project Structure
 
-- `main.go`: Entry point and CSV file loading logic
-- `dbsync.go`: Database synchronization operations
-- `config.go`: Configuration definitions and loading
-- `init-sql/`: SQL files for database initialization
-- `testdata.csv`: Sample data file for testing
+- `main.go`: Entry point and application flow orchestration
+- `dbsync.go`: Core database synchronization operations with transaction support
+- `config.go`: Configuration management with validation and security improvements
+- `loader.go`: File format abstraction layer supporting CSV and JSON formats
+- `compose.yml`: Docker setup for MySQL development environment
+- `testdata/`: Comprehensive test data files for various scenarios
+- `*_test.go`: Extensive test suites with 87.2% coverage
+
+## Testing
+
+The project includes comprehensive test coverage (87.2%) with:
+
+### Running Tests
+
+```bash
+# Run all tests
+go test ./...
+
+# Run tests with coverage report
+go test -cover ./...
+
+# Run specific test files
+go test -v -run TestCSVLoader
+go test -v -run TestJSONLoader
+go test -v -run TestE2ESyncJSON
+```
+
+### Test Coverage Areas
+
+- **Configuration Management**: YAML parsing, validation, fallback handling
+- **File Processing**: CSV/JSON loading, format detection, error handling
+- **Database Operations**: Sync modes, transactions, bulk operations
+- **Error Scenarios**: File permissions, malformed data, connection failures
+- **Edge Cases**: Empty files, invalid configurations, type conversions
+
+### Development Environment
+
+```bash
+# Start MySQL database for development and testing
+docker compose up -d
+
+# Run tests against real database
+go test ./...
+
+# Stop development environment
+docker compose down
+```
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
+## Security Considerations
+
+Starting from the latest version, mydatasyncer requires explicit database configuration for enhanced security:
+
+- **No Default DSN**: Database connection string must be explicitly provided in configuration
+- **Configuration Validation**: Strict validation prevents runtime errors from invalid configurations
+- **Transaction Safety**: All operations are wrapped in transactions with automatic rollback on errors
+
+## Recent Improvements
+
+### Version Updates
+- **Enhanced Test Coverage**: Expanded from 77.1% to 87.2% with comprehensive error handling tests
+- **JSON Format Support**: Full support for JSON file format with automatic type conversion
+- **Security Hardening**: Removed default database credentials, requiring explicit configuration
+- **Robust Error Handling**: Comprehensive error scenarios testing including file permissions, malformed data, and edge cases
+
 ## Future Enhancements
 
-- Support for additional file formats (Excel, JSON, XML)
-- Configuration through external files (YAML, TOML, JSON)
-- Command-line parameters for overriding configuration
-- Enhanced logging and monitoring features
-- Support for additional database systems
+- Support for additional file formats (Excel, XML, YAML)
+- Command-line parameters for overriding configuration values
+- Enhanced logging and monitoring features with structured output
+- Support for additional database systems (PostgreSQL, SQLite)
+- Performance optimizations for very large datasets

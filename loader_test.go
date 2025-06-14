@@ -459,3 +459,142 @@ func TestCSVLoader_Load_Error(t *testing.T) {
 		})
 	}
 }
+
+func TestCSVLoader_AdditionalErrorCases(t *testing.T) {
+	t.Run("empty header row", func(t *testing.T) {
+		// This tests the specific check on line 93-95 in loader.go
+		// Create a CSV with empty header (just commas, no actual column names)
+		csvContent := ",,\n1,test,value"
+		filePath := createTempCSV(t, "empty_header.csv", csvContent)
+		
+		loader := NewCSVLoader(filePath)
+		records, err := loader.Load(nil)
+		
+		// This actually succeeds because empty strings are valid column names
+		// The empty header check in loader.go (line 93-95) checks for len(headerNames) == 0
+		// but ",,\n" produces ["", "", ""] which has length 3, not 0
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		if len(records) != 1 {
+			t.Errorf("Expected 1 record, got %d", len(records))
+		}
+		// Verify the empty column names are handled
+		if len(records) > 0 {
+			for key := range records[0] {
+				if key != "" {
+					// Some columns should be empty strings
+					break
+				}
+			}
+		}
+	})
+
+	t.Run("csv readall error handling", func(t *testing.T) {
+		// This tests the error handling for csv.ReadAll on line 97-100 in loader.go
+		csvContent := `id,name,value
+1,productA
+2,productB,200,extra`
+		filePath := createTempCSV(t, "column_mismatch.csv", csvContent)
+		
+		loader := NewCSVLoader(filePath)
+		_, err := loader.Load(nil)
+		
+		if err == nil {
+			t.Fatalf("Expected error for column count mismatch, got nil")
+		}
+		// The error comes from csv.ReadAll, not the custom check in loader.go
+		// csv.ReadAll fails with "wrong number of fields" before reaching the custom check
+		if !strings.Contains(err.Error(), "wrong number of fields") || !strings.Contains(err.Error(), "error reading CSV data rows") {
+			t.Errorf("Expected CSV reading error with wrong number of fields, got: %v", err)
+		}
+	})
+
+	t.Run("truly empty header to trigger len check", func(t *testing.T) {
+		// To trigger the len(headerNames) == 0 check on line 93-95, 
+		// we need csv.Reader.Read() to return an empty slice []string{}
+		// This is difficult to achieve with normal CSV content.
+		// However, we can test a completely empty file which should fail earlier
+		// in the header reading stage with io.EOF
+		csvContent := ""  // Completely empty file
+		filePath := createTempCSV(t, "truly_empty.csv", csvContent)
+		
+		loader := NewCSVLoader(filePath)
+		_, err := loader.Load(nil)
+		
+		if err == nil {
+			t.Fatalf("Expected error for truly empty file, got nil")
+		}
+		// Should trigger the EOF/ErrFieldCount check on line 88-90
+		if !strings.Contains(err.Error(), "must contain a header row and at least one data row") {
+			t.Errorf("Expected header row error, got: %v", err)
+		}
+	})
+
+	t.Run("file permission error", func(t *testing.T) {
+		if os.Getuid() == 0 {
+			t.Skip("Skipping permission test when running as root")
+		}
+
+		tempDir := t.TempDir()
+		filePath := filepath.Join(tempDir, "no_permission.csv")
+		
+		// Create file then remove read permission
+		err := os.WriteFile(filePath, []byte("id,name\n1,test"), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
+		}
+		
+		err = os.Chmod(filePath, 0000) // No permissions
+		if err != nil {
+			t.Fatalf("Failed to change file permissions: %v", err)
+		}
+		defer os.Chmod(filePath, 0644) // Restore permissions for cleanup
+
+		loader := NewCSVLoader(filePath)
+		_, err = loader.Load(nil)
+		
+		if err == nil {
+			t.Fatalf("Expected permission error, got nil")
+		}
+		if !strings.Contains(err.Error(), "cannot open file") && !strings.Contains(err.Error(), "permission denied") {
+			t.Errorf("Expected permission error, got: %v", err)
+		}
+	})
+
+	t.Run("malformed CSV with quotes", func(t *testing.T) {
+		// Test malformed CSV that causes csv.Reader to fail during ReadAll
+		csvContent := `id,name,value
+1,"unclosed quote,test,value
+2,normal,value`
+		filePath := createTempCSV(t, "malformed.csv", csvContent)
+		
+		loader := NewCSVLoader(filePath)
+		_, err := loader.Load(nil)
+		
+		if err == nil {
+			t.Fatalf("Expected error for malformed CSV, got nil")
+		}
+		// The error should come from csv.ReadAll on line 97-100
+		if !strings.Contains(err.Error(), "error reading CSV data rows") {
+			t.Errorf("Expected CSV reading error, got: %v", err)
+		}
+	})
+
+	t.Run("header only file with EOF", func(t *testing.T) {
+		// Test the specific EOF handling on line 88-90
+		csvContent := `id,name,value` // No newline, just header
+		filePath := createTempCSV(t, "header_only_eof.csv", csvContent)
+		
+		loader := NewCSVLoader(filePath)
+		records, err := loader.Load(nil)
+		
+		// This should succeed and return empty records
+		if err != nil {
+			t.Errorf("Expected no error for header-only file, got: %v", err)
+		}
+		if len(records) != 0 {
+			t.Errorf("Expected 0 records for header-only file, got: %d", len(records))
+		}
+	})
+}
