@@ -46,3 +46,14 @@ jobs:
           MYSQL_USER: root
           MYSQL_PASSWORD: root
           MYSQL_DATABASE: testdb
+          DSN: "root:root@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+
+      - name: Run tests with race detection
+        run: go test -race -short ./...
+        env:
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: 3306
+          MYSQL_USER: root
+          MYSQL_PASSWORD: root
+          MYSQL_DATABASE: testdb
+          DSN: "root:root@tcp(127.0.0.1:3306)/testdb?parseTime=true"
