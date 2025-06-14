@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/goccy/go-yaml"
 )
@@ -211,29 +212,71 @@ func validateMultiTableConfig(cfg Config) error {
 	return nil
 }
 
-// validateNoCycles performs topological sort to detect circular dependencies
-func validateNoCycles(tables []TableSyncConfig) error {
-	// Build adjacency list for dependency graph
-	graph := make(map[string][]string)
-	inDegree := make(map[string]int)
+// CircularDependencyError represents an error with circular dependency information
+type CircularDependencyError struct {
+	Cycle []string
+}
+
+func (e *CircularDependencyError) Error() string {
+	if len(e.Cycle) == 0 {
+		return "circular dependency detected"
+	}
+	return fmt.Sprintf("circular dependency detected: %s", formatCycle(e.Cycle))
+}
+
+// formatCycle formats a dependency cycle for display
+func formatCycle(cycle []string) string {
+	if len(cycle) == 0 {
+		return ""
+	}
+	if len(cycle) == 1 {
+		return fmt.Sprintf("%s -> %s", cycle[0], cycle[0])
+	}
+	// Show the cycle with the first element repeated at the end to show the loop
+	return fmt.Sprintf("%s -> %s", strings.Join(cycle, " -> "), cycle[0])
+}
+
+// DependencyGraph represents a dependency graph for table synchronization
+type DependencyGraph struct {
+	adjacencyList map[string][]string
+	inDegree      map[string]int
+}
+
+// NewDependencyGraph creates a new dependency graph from table configurations
+func NewDependencyGraph(tables []TableSyncConfig) *DependencyGraph {
+	graph := &DependencyGraph{
+		adjacencyList: make(map[string][]string),
+		inDegree:      make(map[string]int),
+	}
 	
 	// Initialize all tables
 	for _, table := range tables {
-		graph[table.Name] = []string{}
-		inDegree[table.Name] = 0
+		graph.adjacencyList[table.Name] = []string{}
+		graph.inDegree[table.Name] = 0
 	}
 	
-	// Build dependency edges
+	// Build dependency edges (parent -> child)
 	for _, table := range tables {
 		for _, dep := range table.Dependencies {
-			graph[dep] = append(graph[dep], table.Name)
-			inDegree[table.Name]++
+			graph.adjacencyList[dep] = append(graph.adjacencyList[dep], table.Name)
+			graph.inDegree[table.Name]++
 		}
+	}
+	
+	return graph
+}
+
+// DetectCycles detects circular dependencies and returns detailed error information
+func (g *DependencyGraph) DetectCycles() error {
+	// Create a copy of inDegree to avoid modifying the original
+	inDegreeCopy := make(map[string]int)
+	for k, v := range g.inDegree {
+		inDegreeCopy[k] = v
 	}
 	
 	// Kahn's algorithm for cycle detection
 	queue := []string{}
-	for tableName, degree := range inDegree {
+	for tableName, degree := range inDegreeCopy {
 		if degree == 0 {
 			queue = append(queue, tableName)
 		}
@@ -245,49 +288,101 @@ func validateNoCycles(tables []TableSyncConfig) error {
 		queue = queue[1:]
 		processed++
 		
-		for _, neighbor := range graph[current] {
-			inDegree[neighbor]--
-			if inDegree[neighbor] == 0 {
+		for _, neighbor := range g.adjacencyList[current] {
+			inDegreeCopy[neighbor]--
+			if inDegreeCopy[neighbor] == 0 {
 				queue = append(queue, neighbor)
 			}
 		}
 	}
 	
-	if processed != len(tables) {
-		return fmt.Errorf("circular dependency exists in table configuration")
+	if processed != len(g.inDegree) {
+		// Find tables involved in cycles
+		cycleNodes := []string{}
+		for tableName, degree := range inDegreeCopy {
+			if degree > 0 {
+				cycleNodes = append(cycleNodes, tableName)
+			}
+		}
+		
+		// Try to find a specific cycle path
+		cycle := g.findCyclePath(cycleNodes)
+		return &CircularDependencyError{Cycle: cycle}
 	}
 	
 	return nil
 }
 
-// GetSyncOrder determines the order of table synchronization based on dependencies
-// Returns two slices: insertOrder (parent->child) and deleteOrder (child->parent)
-func GetSyncOrder(tables []TableSyncConfig) (insertOrder []string, deleteOrder []string, err error) {
-	if len(tables) == 0 {
-		return nil, nil, fmt.Errorf("no tables provided")
-	}
-
-	// Build adjacency list for dependency graph
-	graph := make(map[string][]string)
-	inDegree := make(map[string]int)
-	
-	// Initialize all tables
-	for _, table := range tables {
-		graph[table.Name] = []string{}
-		inDegree[table.Name] = 0
+// findCyclePath attempts to find a specific dependency cycle path
+func (g *DependencyGraph) findCyclePath(cycleNodes []string) []string {
+	if len(cycleNodes) == 0 {
+		return []string{}
 	}
 	
-	// Build dependency edges (parent -> child)
-	for _, table := range tables {
-		for _, dep := range table.Dependencies {
-			graph[dep] = append(graph[dep], table.Name)
-			inDegree[table.Name]++
+	// Use DFS to find a cycle starting from the first cycle node
+	visited := make(map[string]bool)
+	recStack := make(map[string]bool)
+	path := []string{}
+	
+	for _, node := range cycleNodes {
+		if !visited[node] {
+			if cycle := g.dfsForCycle(node, visited, recStack, path); len(cycle) > 0 {
+				return cycle
+			}
 		}
+	}
+	
+	// If we can't find a specific path, return the cycle nodes
+	return cycleNodes
+}
+
+// dfsForCycle performs DFS to find a cycle path
+func (g *DependencyGraph) dfsForCycle(node string, visited, recStack map[string]bool, path []string) []string {
+	visited[node] = true
+	recStack[node] = true
+	path = append(path, node)
+	
+	for _, neighbor := range g.adjacencyList[node] {
+		if !visited[neighbor] {
+			if cycle := g.dfsForCycle(neighbor, visited, recStack, path); len(cycle) > 0 {
+				return cycle
+			}
+		} else if recStack[neighbor] {
+			// Found a cycle - extract the cycle path
+			cycleStart := -1
+			for i, p := range path {
+				if p == neighbor {
+					cycleStart = i
+					break
+				}
+			}
+			if cycleStart >= 0 {
+				return path[cycleStart:]
+			}
+		}
+	}
+	
+	recStack[node] = false
+	return []string{}
+}
+
+// validateNoCycles performs topological sort to detect circular dependencies
+func validateNoCycles(tables []TableSyncConfig) error {
+	graph := NewDependencyGraph(tables)
+	return graph.DetectCycles()
+}
+
+// GetTopologicalOrder returns the topological ordering of tables based on dependencies
+func (g *DependencyGraph) GetTopologicalOrder() ([]string, error) {
+	// Create a copy of inDegree to avoid modifying the original
+	inDegreeCopy := make(map[string]int)
+	for k, v := range g.inDegree {
+		inDegreeCopy[k] = v
 	}
 	
 	// Kahn's algorithm for topological sorting
 	queue := []string{}
-	for tableName, degree := range inDegree {
+	for tableName, degree := range inDegreeCopy {
 		if degree == 0 {
 			queue = append(queue, tableName)
 		}
@@ -299,17 +394,37 @@ func GetSyncOrder(tables []TableSyncConfig) (insertOrder []string, deleteOrder [
 		queue = queue[1:]
 		sortedOrder = append(sortedOrder, current)
 		
-		for _, neighbor := range graph[current] {
-			inDegree[neighbor]--
-			if inDegree[neighbor] == 0 {
+		for _, neighbor := range g.adjacencyList[current] {
+			inDegreeCopy[neighbor]--
+			if inDegreeCopy[neighbor] == 0 {
 				queue = append(queue, neighbor)
 			}
 		}
 	}
 	
 	// Check if all tables were processed (no cycles)
-	if len(sortedOrder) != len(tables) {
-		return nil, nil, fmt.Errorf("circular dependency detected, cannot determine sync order")
+	if len(sortedOrder) != len(g.inDegree) {
+		// Find the cycle for better error reporting
+		if err := g.DetectCycles(); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("circular dependency detected, cannot determine topological order")
+	}
+	
+	return sortedOrder, nil
+}
+
+// GetSyncOrder determines the order of table synchronization based on dependencies
+// Returns two slices: insertOrder (parent->child) and deleteOrder (child->parent)
+func GetSyncOrder(tables []TableSyncConfig) (insertOrder []string, deleteOrder []string, err error) {
+	if len(tables) == 0 {
+		return nil, nil, fmt.Errorf("no tables provided")
+	}
+
+	graph := NewDependencyGraph(tables)
+	sortedOrder, err := graph.GetTopologicalOrder()
+	if err != nil {
+		return nil, nil, err
 	}
 	
 	// Insert order: parent -> child (same as topological order)

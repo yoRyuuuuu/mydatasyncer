@@ -589,6 +589,196 @@ func TestIsMultiTableConfig(t *testing.T) {
 	}
 }
 
+// TestDependencyGraph tests the shared dependency graph functionality
+func TestDependencyGraph(t *testing.T) {
+	tests := []struct {
+		name     string
+		tables   []TableSyncConfig
+		wantErr  bool
+		expected []string
+	}{
+		{
+			name: "Simple dependency graph",
+			tables: []TableSyncConfig{
+				{Name: "users", Dependencies: []string{}},
+				{Name: "orders", Dependencies: []string{"users"}},
+			},
+			expected: []string{"users", "orders"},
+			wantErr:  false,
+		},
+		{
+			name: "Complex dependency graph",
+			tables: []TableSyncConfig{
+				{Name: "categories", Dependencies: []string{}},
+				{Name: "products", Dependencies: []string{"categories"}},
+				{Name: "users", Dependencies: []string{}},
+				{Name: "orders", Dependencies: []string{"users"}},
+				{Name: "order_items", Dependencies: []string{"orders", "products"}},
+			},
+			expected: []string{"categories", "users", "products", "orders", "order_items"},
+			wantErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			graph := NewDependencyGraph(tt.tables)
+			
+			// Test graph structure
+			if len(graph.adjacencyList) != len(tt.tables) {
+				t.Errorf("Expected %d nodes in graph, got %d", len(tt.tables), len(graph.adjacencyList))
+			}
+			
+			// Test topological order
+			order, err := graph.GetTopologicalOrder()
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("Expected error but got nil")
+				}
+				return
+			}
+			
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+			
+			if len(order) != len(tt.expected) {
+				t.Errorf("Expected order length %d, got %d", len(tt.expected), len(order))
+			}
+			
+			// Verify the order respects dependencies
+			for _, table := range tt.tables {
+				tablePos := findPosition(order, table.Name)
+				for _, dep := range table.Dependencies {
+					depPos := findPosition(order, dep)
+					if depPos >= tablePos {
+						t.Errorf("Dependency %s should come before %s in order", dep, table.Name)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestCircularDependencyError tests enhanced error messages for cycle detection
+func TestCircularDependencyError(t *testing.T) {
+	tests := []struct {
+		name             string
+		tables           []TableSyncConfig
+		expectedContains []string
+	}{
+		{
+			name: "Simple two-table cycle",
+			tables: []TableSyncConfig{
+				{Name: "users", Dependencies: []string{"orders"}},
+				{Name: "orders", Dependencies: []string{"users"}},
+			},
+			expectedContains: []string{"circular dependency detected", "users", "orders"},
+		},
+		{
+			name: "Three-table cycle",
+			tables: []TableSyncConfig{
+				{Name: "a", Dependencies: []string{"b"}},
+				{Name: "b", Dependencies: []string{"c"}},
+				{Name: "c", Dependencies: []string{"a"}},
+			},
+			expectedContains: []string{"circular dependency detected", "a", "b", "c"},
+		},
+		{
+			name: "Self-dependency cycle",
+			tables: []TableSyncConfig{
+				{Name: "self_ref", Dependencies: []string{"self_ref"}},
+			},
+			expectedContains: []string{"circular dependency detected", "self_ref"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			graph := NewDependencyGraph(tt.tables)
+			err := graph.DetectCycles()
+			
+			if err == nil {
+				t.Errorf("Expected circular dependency error but got nil")
+				return
+			}
+			
+			// Check if error is of correct type
+			cycleErr, ok := err.(*CircularDependencyError)
+			if !ok {
+				t.Errorf("Expected CircularDependencyError, got %T: %v", err, err)
+				return
+			}
+			
+			errorMsg := cycleErr.Error()
+			t.Logf("Error message: %s", errorMsg)
+			t.Logf("Cycle detected: %v", cycleErr.Cycle)
+			
+			// Check if error message contains expected strings
+			for _, expected := range tt.expectedContains {
+				if !strings.Contains(errorMsg, expected) {
+					t.Errorf("Error message '%s' should contain '%s'", errorMsg, expected)
+				}
+			}
+			
+			// Verify cycle is not empty
+			if len(cycleErr.Cycle) == 0 {
+				t.Errorf("Expected non-empty cycle, got empty slice")
+			}
+		})
+	}
+}
+
+// TestFormatCycle tests the cycle formatting function
+func TestFormatCycle(t *testing.T) {
+	tests := []struct {
+		name     string
+		cycle    []string
+		expected string
+	}{
+		{
+			name:     "Empty cycle",
+			cycle:    []string{},
+			expected: "",
+		},
+		{
+			name:     "Self-reference",
+			cycle:    []string{"table1"},
+			expected: "table1 -> table1",
+		},
+		{
+			name:     "Two-table cycle",
+			cycle:    []string{"users", "orders"},
+			expected: "users -> orders -> users",
+		},
+		{
+			name:     "Three-table cycle",
+			cycle:    []string{"a", "b", "c"},
+			expected: "a -> b -> c -> a",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatCycle(tt.cycle)
+			if result != tt.expected {
+				t.Errorf("formatCycle(%v) = %q, want %q", tt.cycle, result, tt.expected)
+			}
+		})
+	}
+}
+
+// Helper function to find position of element in slice
+func findPosition(slice []string, element string) int {
+	for i, v := range slice {
+		if v == element {
+			return i
+		}
+	}
+	return -1
+}
+
 // Helper function for slice comparison
 func slicesEqual(a, b []string) bool {
 	if len(a) != len(b) {
