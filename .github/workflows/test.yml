@@ -15,7 +15,7 @@ jobs:
         image: mysql:8.0
         env:
           MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: testdb
+          MYSQL_DATABASE: test_db
           MYSQL_USER: test
           MYSQL_PASSWORD: test
         ports:
@@ -45,8 +45,7 @@ jobs:
           MYSQL_PORT: 3306
           MYSQL_USER: root
           MYSQL_PASSWORD: root
-          MYSQL_DATABASE: testdb
-          DSN: "root:root@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+          MYSQL_DATABASE: test_db
 
       - name: Run tests with race detection
         run: go test -race -short ./...
@@ -55,5 +54,4 @@ jobs:
           MYSQL_PORT: 3306
           MYSQL_USER: root
           MYSQL_PASSWORD: root
-          MYSQL_DATABASE: testdb
-          DSN: "root:root@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+          MYSQL_DATABASE: test_db
