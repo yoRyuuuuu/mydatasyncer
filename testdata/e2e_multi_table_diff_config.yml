@@ -1,0 +1,17 @@
+db:
+  dsn: "user:password@tcp(127.0.0.1:3306)/testdb"
+
+tables:
+  - name: "categories"
+    filePath: "testdata/e2e_categories_diff.json"
+    primaryKey: "id"
+    syncMode: "diff"
+    deleteNotInFile: true
+    dependencies: []
+    
+  - name: "products"
+    filePath: "testdata/e2e_products_diff.csv"  
+    primaryKey: "id"
+    syncMode: "diff"
+    deleteNotInFile: true
+    dependencies: ["categories"]

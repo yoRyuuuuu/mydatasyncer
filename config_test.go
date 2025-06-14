@@ -387,3 +387,217 @@ func TestValidateConfig(t *testing.T) {
 		}
 	})
 }
+
+// Multi-table configuration tests
+func TestValidateMultiTableConfig(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      Config
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "Valid multi-table config with dependencies",
+			config: Config{
+				DB: DBConfig{DSN: "user:pass@tcp(localhost:3306)/db"},
+				Tables: []TableSyncConfig{
+					{
+						Name:         "users",
+						FilePath:     "./users.csv",
+						PrimaryKey:   "id",
+						SyncMode:     "diff",
+						Dependencies: []string{},
+					},
+					{
+						Name:         "orders",
+						FilePath:     "./orders.csv",
+						PrimaryKey:   "id",
+						SyncMode:     "diff",
+						Dependencies: []string{"users"},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Empty tables array",
+			config: Config{
+				DB:     DBConfig{DSN: "user:pass@tcp(localhost:3306)/db"},
+				Tables: []TableSyncConfig{},
+				Sync:   SyncConfig{
+					FilePath:  "", // Empty to bypass single table validation
+					TableName: "", // Empty to bypass single table validation
+				},
+			},
+			wantErr:     true,
+			errContains: "at least one table configuration is required",
+		},
+		{
+			name: "Circular dependency",
+			config: Config{
+				DB: DBConfig{DSN: "user:pass@tcp(localhost:3306)/db"},
+				Tables: []TableSyncConfig{
+					{
+						Name:         "users",
+						FilePath:     "./users.csv",
+						PrimaryKey:   "id",
+						SyncMode:     "diff",
+						Dependencies: []string{"orders"},
+					},
+					{
+						Name:         "orders",
+						FilePath:     "./orders.csv",
+						PrimaryKey:   "id",
+						SyncMode:     "diff",
+						Dependencies: []string{"users"},
+					},
+				},
+			},
+			wantErr:     true,
+			errContains: "circular dependency",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateConfig(tt.config)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ValidateConfig() expected error but got nil")
+					return
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("ValidateConfig() error = %v, want error containing %v", err, tt.errContains)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ValidateConfig() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestGetSyncOrder(t *testing.T) {
+	tests := []struct {
+		name                string
+		tables              []TableSyncConfig
+		expectedInsertOrder []string
+		expectedDeleteOrder []string
+		wantErr             bool
+		errContains         string
+	}{
+		{
+			name: "Simple linear dependency",
+			tables: []TableSyncConfig{
+				{Name: "users", Dependencies: []string{}},
+				{Name: "orders", Dependencies: []string{"users"}},
+				{Name: "order_items", Dependencies: []string{"orders"}},
+			},
+			expectedInsertOrder: []string{"users", "orders", "order_items"},
+			expectedDeleteOrder: []string{"order_items", "orders", "users"},
+			wantErr:             false,
+		},
+		{
+			name: "Multiple dependencies",
+			tables: []TableSyncConfig{
+				{Name: "users", Dependencies: []string{}},
+				{Name: "categories", Dependencies: []string{}},
+				{Name: "products", Dependencies: []string{"categories"}},
+				{Name: "orders", Dependencies: []string{"users"}},
+				{Name: "order_items", Dependencies: []string{"orders", "products"}},
+			},
+			expectedInsertOrder: []string{"users", "categories", "orders", "products", "order_items"},
+			expectedDeleteOrder: []string{"order_items", "products", "orders", "categories", "users"},
+			wantErr:             false,
+		},
+		{
+			name:        "No tables",
+			tables:      []TableSyncConfig{},
+			wantErr:     true,
+			errContains: "no tables provided",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			insertOrder, deleteOrder, err := GetSyncOrder(tt.tables)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("GetSyncOrder() expected error but got nil")
+					return
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("GetSyncOrder() error = %v, want error containing %v", err, tt.errContains)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("GetSyncOrder() unexpected error = %v", err)
+				return
+			}
+
+			// Check insert order matches expectation
+			if !slicesEqual(insertOrder, tt.expectedInsertOrder) {
+				t.Errorf("GetSyncOrder() insertOrder = %v, want %v", insertOrder, tt.expectedInsertOrder)
+			}
+
+			// Check delete order matches expectation  
+			if !slicesEqual(deleteOrder, tt.expectedDeleteOrder) {
+				t.Errorf("GetSyncOrder() deleteOrder = %v, want %v", deleteOrder, tt.expectedDeleteOrder)
+			}
+		})
+	}
+}
+
+func TestIsMultiTableConfig(t *testing.T) {
+	tests := []struct {
+		name   string
+		config Config
+		want   bool
+	}{
+		{
+			name: "Multi-table config",
+			config: Config{
+				Tables: []TableSyncConfig{{Name: "users"}},
+			},
+			want: true,
+		},
+		{
+			name: "Single table config",
+			config: Config{
+				Sync: SyncConfig{TableName: "users"},
+			},
+			want: false,
+		},
+		{
+			name:   "Empty config",
+			config: Config{},
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsMultiTableConfig(tt.config)
+			if got != tt.want {
+				t.Errorf("IsMultiTableConfig() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Helper function for slice comparison
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, v := range a {
+		if v != b[i] {
+			return false
+		}
+	}
+	return true
+}

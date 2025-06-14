@@ -925,14 +925,15 @@ func syncMultipleTablesData(ctx context.Context, db *sql.DB, config Config) erro
 	}
 
 	// 1. Load data from all files
+	// Note: For very large datasets, consider implementing streaming/batching to reduce memory usage
 	multiLoader := NewMultiTableLoader(config.Tables)
 	if err := multiLoader.ValidateFilePaths(); err != nil {
-		return fmt.Errorf("file validation error: %w", err)
+		return fmt.Errorf("multi-table file validation error: %w", err)
 	}
 
 	allData, err := multiLoader.LoadAll()
 	if err != nil {
-		return fmt.Errorf("data loading error: %w", err)
+		return fmt.Errorf("multi-table data loading error: %w", err)
 	}
 
 	log.Printf("Loaded data from %d table files", len(allData))
@@ -1067,6 +1068,13 @@ func executeMultiTableSync(ctx context.Context, tx *sql.Tx, config Config, allDa
 
 // executeSingleTableSync executes synchronization for a single table within the transaction
 func executeSingleTableSync(ctx context.Context, tx *sql.Tx, config Config, tableName string, tableData []DataRecord, phase string) error {
+	if tx == nil {
+		return fmt.Errorf("transaction is nil")
+	}
+	if tableName == "" {
+		return fmt.Errorf("table name is empty")
+	}
+	
 	tableConfig, err := GetTableConfig(config.Tables, tableName)
 	if err != nil {
 		return fmt.Errorf("table config not found for '%s': %w", tableName, err)
@@ -1190,53 +1198,13 @@ func executeInsertUpdatePhase(ctx context.Context, tx *sql.Tx, config Config, ta
 
 // executeOverwritePhase handles overwrite mode operations (delete existing + insert all)
 func executeOverwritePhase(ctx context.Context, tx *sql.Tx, config Config, tableData []DataRecord, actualSyncColumns []string) error {
-	// Note: In multi-table sync, we use a careful strategy for overwrite mode
-	// We only delete records that would be replaced by the current table data
-	// This prevents foreign key constraint violations
-
-	if len(tableData) == 0 {
-		// If file is empty, delete all records in this table
-		_, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", config.Sync.TableName))
-		if err != nil {
-			return fmt.Errorf("error deleting all data from table '%s': %w", config.Sync.TableName, err)
-		}
-		log.Printf("Table '%s': Deleted all existing data (file was empty)", config.Sync.TableName)
-		return nil
+	// In overwrite mode for multi-table sync, we delete ALL existing data first
+	// This ensures a complete refresh of the table data
+	_, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", config.Sync.TableName))
+	if err != nil {
+		return fmt.Errorf("error deleting all data from table '%s': %w", config.Sync.TableName, err)
 	}
-
-	// If we have data and a primary key is configured, delete specific records
-	if config.Sync.PrimaryKey != "" && slices.Contains(actualSyncColumns, config.Sync.PrimaryKey) {
-		// Collect primary keys from file data
-		pkValues := make([]any, 0, len(tableData))
-		for _, record := range tableData {
-			if pkVal, exists := record[config.Sync.PrimaryKey]; exists {
-				pkValues = append(pkValues, pkVal)
-			}
-		}
-
-		if len(pkValues) > 0 {
-			// Delete existing records with these primary keys
-			placeholders := make([]string, len(pkValues))
-			for i := range placeholders {
-				placeholders[i] = "?"
-			}
-			deleteStmt := fmt.Sprintf("DELETE FROM %s WHERE %s IN (%s)",
-				config.Sync.TableName, config.Sync.PrimaryKey, strings.Join(placeholders, ","))
-			
-			_, err := tx.ExecContext(ctx, deleteStmt, pkValues...)
-			if err != nil {
-				return fmt.Errorf("error deleting existing records from table '%s': %w", config.Sync.TableName, err)
-			}
-			log.Printf("Table '%s': Deleted %d existing records for overwrite", config.Sync.TableName, len(pkValues))
-		}
-	} else {
-		// No primary key: delete all records (risky but consistent with overwrite behavior)
-		_, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", config.Sync.TableName))
-		if err != nil {
-			return fmt.Errorf("error deleting all data from table '%s': %w", config.Sync.TableName, err)
-		}
-		log.Printf("Table '%s': Deleted all existing data", config.Sync.TableName)
-	}
+	log.Printf("Table '%s': Deleted all existing data for overwrite", config.Sync.TableName)
 
 	// Insert all file records
 	if len(tableData) > 0 {

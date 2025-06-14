@@ -136,8 +136,8 @@ func ValidateConfig(cfg Config) error {
 	}
 
 	// Check if using multi-table sync or legacy single table sync
-	if len(cfg.Tables) > 0 {
-		// Multi-table sync validation
+	if len(cfg.Tables) > 0 || (cfg.Sync.FilePath == "" && cfg.Sync.TableName == "") {
+		// Multi-table sync validation (either has Tables array or empty Sync config)
 		return validateMultiTableConfig(cfg)
 	} else {
 		// Legacy single table sync validation
@@ -169,6 +169,7 @@ func validateMultiTableConfig(cfg Config) error {
 		return fmt.Errorf("at least one table configuration is required in tables array")
 	}
 
+	// First pass: collect all table names and validate basic fields
 	tableNames := make(map[string]bool)
 	for i, table := range cfg.Tables {
 		// Check required fields
@@ -190,10 +191,12 @@ func validateMultiTableConfig(cfg Config) error {
 			return fmt.Errorf("table[%d]: duplicate table name '%s'", i, table.Name)
 		}
 		tableNames[table.Name] = true
+	}
 
-		// Validate dependencies exist in the configuration
+	// Second pass: validate dependencies exist in the configuration
+	for i, table := range cfg.Tables {
 		for _, dep := range table.Dependencies {
-			if !tableNames[dep] && !hasTableName(cfg.Tables[:i], dep) {
+			if !tableNames[dep] {
 				return fmt.Errorf("table[%d] (%s): dependency '%s' not found in configuration", i, table.Name, dep)
 			}
 		}
@@ -205,16 +208,6 @@ func validateMultiTableConfig(cfg Config) error {
 	}
 
 	return nil
-}
-
-// hasTableName checks if a table name exists in the given slice
-func hasTableName(tables []TableSyncConfig, name string) bool {
-	for _, table := range tables {
-		if table.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 // validateNoCycles performs topological sort to detect circular dependencies

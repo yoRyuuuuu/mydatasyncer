@@ -71,8 +71,9 @@ func (l *CSVLoader) WithDelimiter(delimiter rune) *CSVLoader {
 }
 
 // Load loads data from CSV file.
-// The 'columns' argument is ignored for CSVLoader; column names are derived from the CSV header.
-func (l *CSVLoader) Load(_ []string) ([]DataRecord, error) {
+// If 'columns' is specified, only those columns will be included in the result.
+// If 'columns' is empty, all columns from the CSV header will be included.
+func (l *CSVLoader) Load(columns []string) ([]DataRecord, error) {
 	file, err := os.Open(l.FilePath)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open file '%s': %w", l.FilePath, err)
@@ -99,6 +100,23 @@ func (l *CSVLoader) Load(_ []string) ([]DataRecord, error) {
 		return nil, fmt.Errorf("error reading CSV data rows from '%s': %w", l.FilePath, err)
 	}
 
+	// Determine which columns to include in the result
+	var targetColumns []string
+	if len(columns) == 0 {
+		// If no columns specified, use all columns from CSV header
+		targetColumns = headerNames
+	} else {
+		// Filter to only include specified columns that exist in CSV header
+		for _, col := range columns {
+			for _, headerCol := range headerNames {
+				if col == headerCol {
+					targetColumns = append(targetColumns, col)
+					break
+				}
+			}
+		}
+	}
+
 	var records []DataRecord
 	for i, row := range csvRows {
 		// Line number reported to user should be i+2 because 1 for header, 1 for 0-indexed loop
@@ -106,8 +124,14 @@ func (l *CSVLoader) Load(_ []string) ([]DataRecord, error) {
 			return nil, fmt.Errorf("CSV file '%s', line %d: column count (%d) does not match header column count (%d)", l.FilePath, i+2, len(row), len(headerNames))
 		}
 		record := make(DataRecord)
+		// Create a map of all data from the row
+		allData := make(map[string]any)
 		for j, colName := range headerNames {
-			record[colName] = convertValue(row[j])
+			allData[colName] = convertValue(row[j])
+		}
+		// Include only target columns in the result
+		for _, colName := range targetColumns {
+			record[colName] = allData[colName]
 		}
 		records = append(records, record)
 	}
