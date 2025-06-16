@@ -493,8 +493,10 @@ func TestCSVLoader_AdditionalErrorCases(t *testing.T) {
 
 	t.Run("csv readall error handling", func(t *testing.T) {
 		// This tests the error handling for csv.ReadAll on line 97-100 in loader.go
-		csvContent := "id,name,value\n1,\"unclosed quote,value\n2,productB,200"
-		filePath := createTempCSV(t, "malformed.csv", csvContent)
+		csvContent := `id,name,value
+1,productA
+2,productB,200,extra`
+		filePath := createTempCSV(t, "column_mismatch.csv", csvContent)
 
 		loader := NewCSVLoader(filePath)
 		_, err := loader.Load(nil)
