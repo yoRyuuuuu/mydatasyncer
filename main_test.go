@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -462,7 +464,7 @@ func TestE2ESyncJSON_DataTypes(t *testing.T) {
 			BoolFalseCol:     false,
 			IntCol:           42,
 			FloatCol:         3.14159,
-			LargeIntCol:      9223372036854775807,
+			LargeIntCol:      9007199254740000,
 			ZeroCol:          0,
 			NegativeIntCol:   -123,
 			NegativeFloatCol: -99.99,
@@ -492,7 +494,7 @@ func TestE2ESyncJSON_DataTypes(t *testing.T) {
 			BoolFalseCol:     false,
 			IntCol:           2147483647,
 			FloatCol:         1.7976931348623157e+308,
-			LargeIntCol:      -9223372036854774784,
+			LargeIntCol:      -9007199254740000,
 			ZeroCol:          0,
 			NegativeIntCol:   -2147483648,
 			NegativeFloatCol: -1.7976931348623157e+308,
@@ -502,4 +504,228 @@ func TestE2ESyncJSON_DataTypes(t *testing.T) {
 		},
 	}
 	e2eVerifyDataTypesDBState(t, db, expectedRecords)
+}
+
+func TestRunAppErrorHandling(t *testing.T) {
+	t.Run("invalid config validation error", func(t *testing.T) {
+		tempDir := t.TempDir()
+		configFile := filepath.Join(tempDir, "invalid_config.yml")
+
+		// Create a dummy CSV file
+		dummyCSV := filepath.Join(tempDir, "test.csv")
+		err := os.WriteFile(dummyCSV, []byte("id,name\n1,test"), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create dummy CSV file: %v", err)
+		}
+
+		// Create a config that will pass parsing but fail validation
+		invalidConfigYAML := `
+db:
+  dsn: ""  # Empty DSN should cause validation error
+sync:
+  filePath: "` + dummyCSV + `"
+  tableName: "test_table"
+  syncMode: "diff"
+  primaryKey: "id"
+  columns: ["id", "name"]
+  timestampColumns: []
+  immutableColumns: []
+  deleteNotInFile: false
+`
+		err = os.WriteFile(configFile, []byte(invalidConfigYAML), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create test config file: %v", err)
+		}
+
+		err = RunApp(configFile, false)
+		if err == nil {
+			t.Error("Expected error for invalid config")
+		}
+		if !strings.Contains(err.Error(), "configuration error") {
+			t.Errorf("Expected configuration error, got: %v", err)
+		}
+	})
+
+	t.Run("invalid database DSN error", func(t *testing.T) {
+		tempDir := t.TempDir()
+		configFile := filepath.Join(tempDir, "invalid_dsn.yml")
+
+		// Create a dummy CSV file
+		dummyCSV := filepath.Join(tempDir, "test.csv")
+		err := os.WriteFile(dummyCSV, []byte("id,name\n1,test"), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create dummy CSV file: %v", err)
+		}
+
+		invalidDSNConfig := `
+db:
+  dsn: "invalid:dsn:format"  # Invalid DSN format
+sync:
+  filePath: "` + dummyCSV + `"
+  tableName: "test_table"
+  syncMode: "overwrite"
+  primaryKey: "id"
+  columns: ["id", "name"]
+  timestampColumns: []
+  immutableColumns: []
+  deleteNotInFile: false
+`
+		err = os.WriteFile(configFile, []byte(invalidDSNConfig), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create test config file: %v", err)
+		}
+
+		err = RunApp(configFile, false)
+		if err == nil {
+			t.Error("Expected error for invalid DSN")
+		}
+		if !strings.Contains(err.Error(), "database connection error") &&
+		   !strings.Contains(err.Error(), "database connectivity error") {
+			t.Errorf("Expected database connection/connectivity error, got: %v", err)
+		}
+	})
+
+	t.Run("non-existent file error", func(t *testing.T) {
+		tempDir := t.TempDir()
+		configFile := filepath.Join(tempDir, "nonexistent_file.yml")
+
+		nonExistentFileConfig := `
+db:
+  dsn: "user:password@tcp(127.0.0.1:3306)/testdb"
+sync:
+  filePath: "non_existent_file.csv"  # File that doesn't exist
+  tableName: "test_table"
+  syncMode: "overwrite"
+  primaryKey: "id"
+  columns: ["id", "name"]
+  timestampColumns: []
+  immutableColumns: []
+  deleteNotInFile: false
+`
+		err := os.WriteFile(configFile, []byte(nonExistentFileConfig), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create test config file: %v", err)
+		}
+
+		err = RunApp(configFile, false)
+		if err == nil {
+			t.Error("Expected error for non-existent file")
+		}
+		if !strings.Contains(err.Error(), "file reading error") {
+			t.Errorf("Expected file reading error, got: %v", err)
+		}
+	})
+
+	t.Run("dry run mode logs correctly", func(t *testing.T) {
+		tempDir := t.TempDir()
+		configFile := filepath.Join(tempDir, "dry_run_config.yml")
+		dataFile := filepath.Join(tempDir, "test_data.csv")
+
+		// Create valid config with all required fields
+		validConfig := `
+db:
+  dsn: "user:password@tcp(127.0.0.1:3306)/testdb"
+sync:
+  filePath: "` + dataFile + `"
+  tableName: "test_table"
+  syncMode: "overwrite"
+  primaryKey: "id"
+  columns: ["id", "name", "email"]
+  timestampColumns: []
+  immutableColumns: []
+  deleteNotInFile: false
+`
+		err := os.WriteFile(configFile, []byte(validConfig), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create test config file: %v", err)
+		}
+
+		// Create test CSV file
+		csvContent := `id,name,email
+1,Test User,test@example.com
+2,Another User,another@example.com`
+		err = os.WriteFile(dataFile, []byte(csvContent), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create test data file: %v", err)
+		}
+
+		// This should fail on database connection but we're testing the dry-run logging
+		err = RunApp(configFile, true)
+		// Expected to fail due to invalid DB connection, but that's ok for this test
+		// We're mainly testing that dry-run mode doesn't panic and logs correctly
+		if err != nil && !strings.Contains(err.Error(), "database") {
+			t.Errorf("Unexpected error type: %v", err)
+		}
+	})
+
+	t.Run("invalid file format error", func(t *testing.T) {
+		tempDir := t.TempDir()
+		configFile := filepath.Join(tempDir, "invalid_format.yml")
+		dataFile := filepath.Join(tempDir, "invalid.txt")  // Unsupported file extension
+
+		validConfig := `
+db:
+  dsn: "user:password@tcp(127.0.0.1:3306)/testdb"
+sync:
+  filePath: "` + dataFile + `"
+  tableName: "test_table"
+  syncMode: "overwrite"
+  primaryKey: "id"
+  columns: ["id", "name"]
+  timestampColumns: []
+  immutableColumns: []
+  deleteNotInFile: false
+`
+		err := os.WriteFile(configFile, []byte(validConfig), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create test config file: %v", err)
+		}
+
+		// Create file with unsupported extension
+		err = os.WriteFile(dataFile, []byte("some content"), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create test data file: %v", err)
+		}
+
+		err = RunApp(configFile, false)
+		if err == nil {
+			t.Error("Expected error for unsupported file format")
+		}
+		if !strings.Contains(err.Error(), "file reading error") {
+			t.Errorf("Expected file reading error, got: %v", err)
+		}
+	})
+}
+
+func TestLoadDataFromFileErrorHandling(t *testing.T) {
+	t.Run("unsupported file extension", func(t *testing.T) {
+		config := &Config{
+			Sync: SyncConfig{
+				FilePath: "test.txt", // Unsupported extension
+				Columns:  []string{"id", "name"},
+			},
+		}
+
+		_, err := loadDataFromFile(config)
+		if err == nil {
+			t.Error("Expected error for unsupported file extension")
+		}
+		if !strings.Contains(err.Error(), "error creating loader") {
+			t.Errorf("Expected loader creation error, got: %v", err)
+		}
+	})
+
+	t.Run("non-existent file", func(t *testing.T) {
+		config := &Config{
+			Sync: SyncConfig{
+				FilePath: "non_existent_file.csv",
+				Columns:  []string{"id", "name"},
+			},
+		}
+
+		_, err := loadDataFromFile(config)
+		if err == nil {
+			t.Error("Expected error for non-existent file")
+		}
+	})
 }

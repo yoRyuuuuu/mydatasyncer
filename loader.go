@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -40,32 +39,6 @@ func convertValue(val any) any {
 
 	// Return other types as-is
 	return val
-}
-
-func convertJSONValueToString(val any) string {
-	if val == nil {
-		return ""
-	}
-
-	switch v := val.(type) {
-	case string:
-		return v
-	case bool:
-		return strconv.FormatBool(v)
-	case float64:
-		// Check if it's a whole number to avoid unnecessary decimal places
-		if v == float64(int64(v)) {
-			return strconv.FormatInt(int64(v), 10)
-		}
-		return strconv.FormatFloat(v, 'f', -1, 64)
-	case int64:
-		return strconv.FormatInt(v, 10)
-	case int:
-		return strconv.Itoa(v)
-	default:
-		// Fallback for other types (arrays, objects, etc.)
-		return fmt.Sprintf("%v", v)
-	}
 }
 
 // Loader is the basic interface for data loaders

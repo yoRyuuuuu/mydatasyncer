@@ -148,8 +148,8 @@ func TestJSONLoader_Load_Success(t *testing.T) {
 ]`,
 			columns: []string{"id", "name", "stock"},
 			expected: []DataRecord{
-				{"id": "1", "name": "Product A", "stock": "10"},
-				{"id": "2", "name": "Product B", "stock": "5"},
+				{"id": "1", "name": "Product A", "stock": float64(10)},
+				{"id": "2", "name": "Product B", "stock": float64(5)},
 			},
 		},
 		{
@@ -165,7 +165,7 @@ func TestJSONLoader_Load_Success(t *testing.T) {
 ]`,
 			columns: []string{"id", "name", "available", "rating"},
 			expected: []DataRecord{
-				{"id": "1", "name": "Test", "available": "true", "rating": "4.5"},
+				{"id": float64(1), "name": "Test", "available": true, "rating": 4.5},
 			},
 		},
 		{
@@ -187,7 +187,7 @@ func TestJSONLoader_Load_Success(t *testing.T) {
 ]`,
 			columns: []string{}, // Empty - should auto-detect and sort keys
 			expected: []DataRecord{
-				{"active": "true", "id": "1", "name": "Test"}, // Keys sorted alphabetically
+				{"active": true, "id": float64(1), "name": "Test"},
 			},
 		},
 		{
@@ -198,14 +198,14 @@ func TestJSONLoader_Load_Success(t *testing.T) {
 			columns: []string{"int_val", "float_val", "bool_true", "bool_false", "null_val", "string_val", "zero_int", "zero_float"},
 			expected: []DataRecord{
 				{
-					"int_val":     "42",        // 整数は小数点なしで表現
-					"float_val":   "3.14159",   // 浮動小数点は適切な精度で表現
-					"bool_true":   "true",      // boolean true
-					"bool_false":  "false",     // boolean false
-					"null_val":    "",          // null は空文字列
-					"string_val":  "text",      // 文字列はそのまま
-					"zero_int":    "0",         // ゼロ整数
-					"zero_float":  "0",         // ゼロ浮動小数点は整数として表現
+					"int_val":     float64(42),
+					"float_val":   3.14159,
+					"bool_true":   true,        // boolean true
+					"bool_false":  false,       // boolean false
+					"null_val":    nil,
+					"string_val":  "text",
+					"zero_int":    float64(0),
+					"zero_float":  0.0,
 				},
 			},
 		},
@@ -217,10 +217,10 @@ func TestJSONLoader_Load_Success(t *testing.T) {
 			columns: []string{"large_int", "small_float", "large_float", "negative_val"},
 			expected: []DataRecord{
 				{
-					"large_int":    "9007199254740991",      // 大きな整数も正確に
-					"small_float":  "0.000001",              // 小さな浮動小数点
-					"large_float":  "123456789.98765433",    // 大きな浮動小数点（float64精度制限）
-					"negative_val": "-42.5",                 // 負の数値
+					"large_int":    9.007199254740991e+15,
+					"small_float":  1e-06,
+					"large_float":  1.2345678998765433e+08,
+					"negative_val": -42.5,
 				},
 			},
 		},
@@ -236,6 +236,14 @@ func TestJSONLoader_Load_Success(t *testing.T) {
 			}
 			if !reflect.DeepEqual(records, tt.expected) {
 				t.Errorf("Load() got = %v, want %v", records, tt.expected)
+				if len(records) > 0 && len(tt.expected) > 0 {
+					for k, v := range records[0] {
+						expectedV := tt.expected[0][k]
+						if reflect.TypeOf(v) != reflect.TypeOf(expectedV) {
+							t.Errorf("Type mismatch for key %s: got %T, want %T", k, v, expectedV)
+						}
+					}
+				}
 			}
 		})
 	}
@@ -393,56 +401,6 @@ func TestGetLoader(t *testing.T) {
 	}
 }
 
-func TestConvertJSONValueToString(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    interface{}
-		expected string
-	}{
-		// Nil value
-		{"nil value", nil, ""},
-		
-		// String values
-		{"string value", "hello", "hello"},
-		{"empty string", "", ""},
-		{"string with spaces", "hello world", "hello world"},
-		
-		// Boolean values
-		{"bool true", true, "true"},
-		{"bool false", false, "false"},
-		
-		// Integer values
-		{"int value", 42, "42"},
-		{"int64 value", int64(123), "123"},
-		{"zero int", 0, "0"},
-		{"negative int", -42, "-42"},
-		
-		// Float values
-		{"float64 whole number", 5.0, "5"},
-		{"float64 decimal", 3.14159, "3.14159"},
-		{"zero float", 0.0, "0"},
-		{"negative float", -2.5, "-2.5"},
-		{"small float", 0.000001, "0.000001"},
-		
-		// Large numbers
-		{"large int", int64(9007199254740991), "9007199254740991"},
-		{"large float", 123456789.987654321, "123456789.98765433"}, // Go float64 precision limit
-		
-		// Edge cases for floats
-		{"float with trailing zeros", 1.2300, "1.23"},
-		{"very small decimal", 1e-10, "0.0000000001"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := convertJSONValueToString(tt.input)
-			if result != tt.expected {
-				t.Errorf("convertJSONValueToString(%v) = %q, want %q", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestCSVLoader_Load_Error(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -500,4 +458,143 @@ func TestCSVLoader_Load_Error(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCSVLoader_AdditionalErrorCases(t *testing.T) {
+	t.Run("empty header row", func(t *testing.T) {
+		// This tests the specific check on line 93-95 in loader.go
+		// Create a CSV with empty header (just commas, no actual column names)
+		csvContent := ",,\n1,test,value"
+		filePath := createTempCSV(t, "empty_header.csv", csvContent)
+		
+		loader := NewCSVLoader(filePath)
+		records, err := loader.Load(nil)
+		
+		// This actually succeeds because empty strings are valid column names
+		// The empty header check in loader.go (line 93-95) checks for len(headerNames) == 0
+		// but ",,\n" produces ["", "", ""] which has length 3, not 0
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		if len(records) != 1 {
+			t.Errorf("Expected 1 record, got %d", len(records))
+		}
+		// Verify the empty column names are handled
+		if len(records) > 0 {
+			for key := range records[0] {
+				if key != "" {
+					// Some columns should be empty strings
+					break
+				}
+			}
+		}
+	})
+
+	t.Run("csv readall error handling", func(t *testing.T) {
+		// This tests the error handling for csv.ReadAll on line 97-100 in loader.go
+		csvContent := `id,name,value
+1,productA
+2,productB,200,extra`
+		filePath := createTempCSV(t, "column_mismatch.csv", csvContent)
+		
+		loader := NewCSVLoader(filePath)
+		_, err := loader.Load(nil)
+		
+		if err == nil {
+			t.Fatalf("Expected error for column count mismatch, got nil")
+		}
+		// The error comes from csv.ReadAll, not the custom check in loader.go
+		// csv.ReadAll fails with "wrong number of fields" before reaching the custom check
+		if !strings.Contains(err.Error(), "wrong number of fields") || !strings.Contains(err.Error(), "error reading CSV data rows") {
+			t.Errorf("Expected CSV reading error with wrong number of fields, got: %v", err)
+		}
+	})
+
+	t.Run("truly empty header to trigger len check", func(t *testing.T) {
+		// To trigger the len(headerNames) == 0 check on line 93-95, 
+		// we need csv.Reader.Read() to return an empty slice []string{}
+		// This is difficult to achieve with normal CSV content.
+		// However, we can test a completely empty file which should fail earlier
+		// in the header reading stage with io.EOF
+		csvContent := ""  // Completely empty file
+		filePath := createTempCSV(t, "truly_empty.csv", csvContent)
+		
+		loader := NewCSVLoader(filePath)
+		_, err := loader.Load(nil)
+		
+		if err == nil {
+			t.Fatalf("Expected error for truly empty file, got nil")
+		}
+		// Should trigger the EOF/ErrFieldCount check on line 88-90
+		if !strings.Contains(err.Error(), "must contain a header row and at least one data row") {
+			t.Errorf("Expected header row error, got: %v", err)
+		}
+	})
+
+	t.Run("file permission error", func(t *testing.T) {
+		if os.Getuid() == 0 {
+			t.Skip("Skipping permission test when running as root")
+		}
+
+		tempDir := t.TempDir()
+		filePath := filepath.Join(tempDir, "no_permission.csv")
+		
+		// Create file then remove read permission
+		err := os.WriteFile(filePath, []byte("id,name\n1,test"), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
+		}
+		
+		err = os.Chmod(filePath, 0000) // No permissions
+		if err != nil {
+			t.Fatalf("Failed to change file permissions: %v", err)
+		}
+		defer os.Chmod(filePath, 0644) // Restore permissions for cleanup
+
+		loader := NewCSVLoader(filePath)
+		_, err = loader.Load(nil)
+		
+		if err == nil {
+			t.Fatalf("Expected permission error, got nil")
+		}
+		if !strings.Contains(err.Error(), "cannot open file") && !strings.Contains(err.Error(), "permission denied") {
+			t.Errorf("Expected permission error, got: %v", err)
+		}
+	})
+
+	t.Run("malformed CSV with quotes", func(t *testing.T) {
+		// Test malformed CSV that causes csv.Reader to fail during ReadAll
+		csvContent := `id,name,value
+1,"unclosed quote,test,value
+2,normal,value`
+		filePath := createTempCSV(t, "malformed.csv", csvContent)
+		
+		loader := NewCSVLoader(filePath)
+		_, err := loader.Load(nil)
+		
+		if err == nil {
+			t.Fatalf("Expected error for malformed CSV, got nil")
+		}
+		// The error should come from csv.ReadAll on line 97-100
+		if !strings.Contains(err.Error(), "error reading CSV data rows") {
+			t.Errorf("Expected CSV reading error, got: %v", err)
+		}
+	})
+
+	t.Run("header only file with EOF", func(t *testing.T) {
+		// Test the specific EOF handling on line 88-90
+		csvContent := `id,name,value` // No newline, just header
+		filePath := createTempCSV(t, "header_only_eof.csv", csvContent)
+		
+		loader := NewCSVLoader(filePath)
+		records, err := loader.Load(nil)
+		
+		// This should succeed and return empty records
+		if err != nil {
+			t.Errorf("Expected no error for header-only file, got: %v", err)
+		}
+		if len(records) != 0 {
+			t.Errorf("Expected 0 records for header-only file, got: %d", len(records))
+		}
+	})
 }
