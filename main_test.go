@@ -729,3 +729,417 @@ func TestLoadDataFromFileErrorHandling(t *testing.T) {
 		}
 	})
 }
+
+// Multi-table test helper structs
+type CategoryTestRecord struct {
+	ID          int
+	Name        string
+	Description string
+}
+
+type ProductTestRecord struct {
+	ID         int
+	Name       string
+	CategoryID int
+	Price      float64
+}
+
+type OrderTestRecord struct {
+	ID         int
+	CustomerID int
+	Total      float64
+	Status     string
+}
+
+type OrderItemTestRecord struct {
+	ID        int
+	OrderID   int
+	ProductID int
+	Quantity  int
+	UnitPrice float64
+}
+
+// e2eSetupMultiTableTestDB creates tables for multi-table E2E tests
+func e2eSetupMultiTableTestDB(t *testing.T) *sql.DB {
+	db, err := sql.Open("mysql", e2eTestDBDSN)
+	if err != nil {
+		t.Fatalf("Failed to connect to database: %v", err)
+	}
+
+	// Drop tables in reverse dependency order (child → parent)
+	tablesToDrop := []string{"order_items", "orders", "products", "categories"}
+	for _, tableName := range tablesToDrop {
+		_, err = db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName))
+		if err != nil {
+			t.Fatalf("Failed to drop table %s: %v", tableName, err)
+		}
+	}
+
+	// Create tables in dependency order (parent → child)
+	createCategoriesSQL := `
+CREATE TABLE categories (
+	id INT PRIMARY KEY,
+	name VARCHAR(255) NOT NULL,
+	description TEXT
+);`
+	_, err = db.Exec(createCategoriesSQL)
+	if err != nil {
+		t.Fatalf("Failed to create categories table: %v", err)
+	}
+
+	createProductsSQL := `
+CREATE TABLE products (
+	id INT PRIMARY KEY,
+	name VARCHAR(255) NOT NULL,
+	category_id INT NOT NULL,
+	price DECIMAL(10,2) NOT NULL,
+	FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
+);`
+	_, err = db.Exec(createProductsSQL)
+	if err != nil {
+		t.Fatalf("Failed to create products table: %v", err)
+	}
+
+	createOrdersSQL := `
+CREATE TABLE orders (
+	id INT PRIMARY KEY,
+	customer_id INT NOT NULL,
+	total DECIMAL(10,2) NOT NULL,
+	status VARCHAR(50) NOT NULL
+);`
+	_, err = db.Exec(createOrdersSQL)
+	if err != nil {
+		t.Fatalf("Failed to create orders table: %v", err)
+	}
+
+	createOrderItemsSQL := `
+CREATE TABLE order_items (
+	id INT PRIMARY KEY,
+	order_id INT NOT NULL,
+	product_id INT NOT NULL,
+	quantity INT NOT NULL,
+	unit_price DECIMAL(10,2) NOT NULL,
+	FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+	FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+);`
+	_, err = db.Exec(createOrderItemsSQL)
+	if err != nil {
+		t.Fatalf("Failed to create order_items table: %v", err)
+	}
+
+	return db
+}
+
+// e2eTearDownMultiTableTestDB drops all multi-table test tables
+func e2eTearDownMultiTableTestDB(_ *testing.T, db *sql.DB) {
+	if db == nil {
+		return
+	}
+
+	// Drop tables in reverse dependency order (child → parent)
+	tablesToDrop := []string{"order_items", "orders", "products", "categories"}
+	for _, tableName := range tablesToDrop {
+		_, err := db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName))
+		if err != nil {
+			log.Printf("Failed to drop table %s during teardown: %v", tableName, err)
+		}
+	}
+	db.Close()
+}
+
+// Helper functions to verify multi-table database state
+func e2eVerifyCategoriesDBState(t *testing.T, db *sql.DB, expectedRecords []CategoryTestRecord) {
+	t.Helper()
+	rows, err := db.Query("SELECT id, name, description FROM categories ORDER BY id ASC")
+	if err != nil {
+		t.Fatalf("Failed to query categories: %v", err)
+	}
+	defer rows.Close()
+
+	var actualRecords []CategoryTestRecord
+	for rows.Next() {
+		var r CategoryTestRecord
+		if err := rows.Scan(&r.ID, &r.Name, &r.Description); err != nil {
+			t.Fatalf("Failed to scan category row: %v", err)
+		}
+		actualRecords = append(actualRecords, r)
+	}
+
+	if len(actualRecords) != len(expectedRecords) {
+		t.Fatalf("Categories: Expected %d records, but got %d. Actual: %+v", len(expectedRecords), len(actualRecords), actualRecords)
+	}
+
+	for i, expected := range expectedRecords {
+		actual := actualRecords[i]
+		if actual.ID != expected.ID || actual.Name != expected.Name || actual.Description != expected.Description {
+			t.Errorf("Category record mismatch at index %d. Expected: %+v, Got: %+v", i, expected, actual)
+		}
+	}
+}
+
+func e2eVerifyProductsDBState(t *testing.T, db *sql.DB, expectedRecords []ProductTestRecord) {
+	t.Helper()
+	rows, err := db.Query("SELECT id, name, category_id, price FROM products ORDER BY id ASC")
+	if err != nil {
+		t.Fatalf("Failed to query products: %v", err)
+	}
+	defer rows.Close()
+
+	var actualRecords []ProductTestRecord
+	for rows.Next() {
+		var r ProductTestRecord
+		if err := rows.Scan(&r.ID, &r.Name, &r.CategoryID, &r.Price); err != nil {
+			t.Fatalf("Failed to scan product row: %v", err)
+		}
+		actualRecords = append(actualRecords, r)
+	}
+
+	if len(actualRecords) != len(expectedRecords) {
+		t.Fatalf("Products: Expected %d records, but got %d. Actual: %+v", len(expectedRecords), len(actualRecords), actualRecords)
+	}
+
+	for i, expected := range expectedRecords {
+		actual := actualRecords[i]
+		if actual.ID != expected.ID || actual.Name != expected.Name || actual.CategoryID != expected.CategoryID || actual.Price != expected.Price {
+			t.Errorf("Product record mismatch at index %d. Expected: %+v, Got: %+v", i, expected, actual)
+		}
+	}
+}
+
+func e2eVerifyOrdersDBState(t *testing.T, db *sql.DB, expectedRecords []OrderTestRecord) {
+	t.Helper()
+	rows, err := db.Query("SELECT id, customer_id, total, status FROM orders ORDER BY id ASC")
+	if err != nil {
+		t.Fatalf("Failed to query orders: %v", err)
+	}
+	defer rows.Close()
+
+	var actualRecords []OrderTestRecord
+	for rows.Next() {
+		var r OrderTestRecord
+		if err := rows.Scan(&r.ID, &r.CustomerID, &r.Total, &r.Status); err != nil {
+			t.Fatalf("Failed to scan order row: %v", err)
+		}
+		actualRecords = append(actualRecords, r)
+	}
+
+	if len(actualRecords) != len(expectedRecords) {
+		t.Fatalf("Orders: Expected %d records, but got %d. Actual: %+v", len(expectedRecords), len(actualRecords), actualRecords)
+	}
+
+	for i, expected := range expectedRecords {
+		actual := actualRecords[i]
+		if actual.ID != expected.ID || actual.CustomerID != expected.CustomerID || actual.Total != expected.Total || actual.Status != expected.Status {
+			t.Errorf("Order record mismatch at index %d. Expected: %+v, Got: %+v", i, expected, actual)
+		}
+	}
+}
+
+func e2eVerifyOrderItemsDBState(t *testing.T, db *sql.DB, expectedRecords []OrderItemTestRecord) {
+	t.Helper()
+	rows, err := db.Query("SELECT id, order_id, product_id, quantity, unit_price FROM order_items ORDER BY id ASC")
+	if err != nil {
+		t.Fatalf("Failed to query order_items: %v", err)
+	}
+	defer rows.Close()
+
+	var actualRecords []OrderItemTestRecord
+	for rows.Next() {
+		var r OrderItemTestRecord
+		if err := rows.Scan(&r.ID, &r.OrderID, &r.ProductID, &r.Quantity, &r.UnitPrice); err != nil {
+			t.Fatalf("Failed to scan order_item row: %v", err)
+		}
+		actualRecords = append(actualRecords, r)
+	}
+
+	if len(actualRecords) != len(expectedRecords) {
+		t.Fatalf("Order Items: Expected %d records, but got %d. Actual: %+v", len(expectedRecords), len(actualRecords), actualRecords)
+	}
+
+	for i, expected := range expectedRecords {
+		actual := actualRecords[i]
+		if actual.ID != expected.ID || actual.OrderID != expected.OrderID || actual.ProductID != expected.ProductID || actual.Quantity != expected.Quantity || actual.UnitPrice != expected.UnitPrice {
+			t.Errorf("Order Item record mismatch at index %d. Expected: %+v, Got: %+v", i, expected, actual)
+		}
+	}
+}
+
+// E2E Multi-table Tests
+func TestE2EMultiTableSync_Initial(t *testing.T) {
+	checkTestFileExists(t, "testdata/e2e_multi_table_config.yml")
+	checkTestFileExists(t, "testdata/e2e_categories.json")
+	checkTestFileExists(t, "testdata/e2e_products.csv")
+	checkTestFileExists(t, "testdata/e2e_orders.json")
+	checkTestFileExists(t, "testdata/e2e_order_items.csv")
+
+	db := e2eSetupMultiTableTestDB(t)
+	defer e2eTearDownMultiTableTestDB(t, db)
+
+	err := RunApp("testdata/e2e_multi_table_config.yml", false)
+	if err != nil {
+		t.Fatalf("RunApp failed for multi-table sync: %v", err)
+	}
+
+	// Verify all tables have expected data
+	expectedCategories := []CategoryTestRecord{
+		{ID: 1, Name: "Electronics", Description: "Electronic products"},
+		{ID: 2, Name: "Books", Description: "Books and literature"},
+	}
+	e2eVerifyCategoriesDBState(t, db, expectedCategories)
+
+	expectedProducts := []ProductTestRecord{
+		{ID: 1, Name: "Laptop", CategoryID: 1, Price: 1299.99},
+		{ID: 2, Name: "Smartphone", CategoryID: 1, Price: 799.99},
+		{ID: 3, Name: "Programming Book", CategoryID: 2, Price: 49.99},
+	}
+	e2eVerifyProductsDBState(t, db, expectedProducts)
+
+	expectedOrders := []OrderTestRecord{
+		{ID: 1, CustomerID: 101, Total: 1349.98, Status: "completed"},
+		{ID: 2, CustomerID: 102, Total: 49.99, Status: "pending"},
+	}
+	e2eVerifyOrdersDBState(t, db, expectedOrders)
+
+	expectedOrderItems := []OrderItemTestRecord{
+		{ID: 1, OrderID: 1, ProductID: 1, Quantity: 1, UnitPrice: 1299.99},
+		{ID: 2, OrderID: 1, ProductID: 2, Quantity: 1, UnitPrice: 799.99},
+		{ID: 3, OrderID: 2, ProductID: 3, Quantity: 1, UnitPrice: 49.99},
+	}
+	e2eVerifyOrderItemsDBState(t, db, expectedOrderItems)
+}
+
+func TestE2EMultiTableSync_Overwrite(t *testing.T) {
+	checkTestFileExists(t, "testdata/e2e_multi_table_overwrite_config.yml")
+	checkTestFileExists(t, "testdata/e2e_categories_updated.json")
+	checkTestFileExists(t, "testdata/e2e_products_updated.csv")
+
+	db := e2eSetupMultiTableTestDB(t)
+	defer e2eTearDownMultiTableTestDB(t, db)
+
+	// Insert some initial data to verify overwrite works
+	_, err := db.Exec("INSERT INTO categories (id, name, description) VALUES (1, 'Old Category', 'Old description')")
+	if err != nil {
+		t.Fatalf("Failed to insert initial categories: %v", err)
+	}
+	_, err = db.Exec("INSERT INTO products (id, name, category_id, price) VALUES (1, 'Old Product', 1, 99.99)")
+	if err != nil {
+		t.Fatalf("Failed to insert initial products: %v", err)
+	}
+
+	err = RunApp("testdata/e2e_multi_table_overwrite_config.yml", false)
+	if err != nil {
+		t.Fatalf("RunApp failed for multi-table overwrite sync: %v", err)
+	}
+
+	// Verify data has been completely replaced
+	expectedCategories := []CategoryTestRecord{
+		{ID: 3, Name: "Home & Garden", Description: "Home and garden products"},
+		{ID: 4, Name: "Sports", Description: "Sports equipment"},
+	}
+	e2eVerifyCategoriesDBState(t, db, expectedCategories)
+
+	expectedProducts := []ProductTestRecord{
+		{ID: 1, Name: "Garden Tools", CategoryID: 3, Price: 89.99},
+		{ID: 2, Name: "Tennis Racket", CategoryID: 4, Price: 149.99},
+	}
+	e2eVerifyProductsDBState(t, db, expectedProducts)
+}
+
+func TestE2EMultiTableSync_Diff(t *testing.T) {
+	checkTestFileExists(t, "testdata/e2e_multi_table_diff_config.yml")
+	checkTestFileExists(t, "testdata/e2e_categories_diff.json")
+	checkTestFileExists(t, "testdata/e2e_products_diff.csv")
+
+	db := e2eSetupMultiTableTestDB(t)
+	defer e2eTearDownMultiTableTestDB(t, db)
+
+	// Insert initial data to test diff operations
+	// Categories: Keep 1 (update), delete 2, add 3
+	_, err := db.Exec("INSERT INTO categories (id, name, description) VALUES (1, 'Electronics', 'Electronic products'), (2, 'Books', 'Books and literature')")
+	if err != nil {
+		t.Fatalf("Failed to insert initial categories: %v", err)
+	}
+
+	// Products: Keep 1 (update), delete 2 and 3, add 4
+	_, err = db.Exec("INSERT INTO products (id, name, category_id, price) VALUES (1, 'Laptop', 1, 1299.99), (2, 'Smartphone', 1, 799.99), (3, 'Programming Book', 2, 49.99)")
+	if err != nil {
+		t.Fatalf("Failed to insert initial products: %v", err)
+	}
+
+	err = RunApp("testdata/e2e_multi_table_diff_config.yml", false)
+	if err != nil {
+		t.Fatalf("RunApp failed for multi-table diff sync: %v", err)
+	}
+
+	// Verify diff operations: updates, inserts, and deletes
+	expectedCategories := []CategoryTestRecord{
+		{ID: 1, Name: "Electronics", Description: "Updated: Electronic products and gadgets"}, // Updated
+		{ID: 3, Name: "Home & Garden", Description: "Home and garden products"},               // Inserted
+		// ID 2 should be deleted
+	}
+	e2eVerifyCategoriesDBState(t, db, expectedCategories)
+
+	expectedProducts := []ProductTestRecord{
+		{ID: 1, Name: "Gaming Laptop", CategoryID: 1, Price: 1599.99}, // Updated
+		{ID: 4, Name: "Garden Hose", CategoryID: 3, Price: 29.99},     // Inserted
+		// ID 2 and 3 should be deleted
+	}
+	e2eVerifyProductsDBState(t, db, expectedProducts)
+}
+
+func TestE2EMultiTableSync_DryRun(t *testing.T) {
+	checkTestFileExists(t, "testdata/e2e_multi_table_config.yml")
+
+	db := e2eSetupMultiTableTestDB(t)
+	defer e2eTearDownMultiTableTestDB(t, db)
+
+	// Insert some existing data to see what the dry run would do
+	_, err := db.Exec("INSERT INTO categories (id, name, description) VALUES (99, 'Existing Category', 'Will be deleted in dry run')")
+	if err != nil {
+		t.Fatalf("Failed to insert initial test data: %v", err)
+	}
+
+	// Run in dry-run mode
+	err = RunApp("testdata/e2e_multi_table_config.yml", true)
+	if err != nil {
+		t.Fatalf("RunApp failed for multi-table dry run: %v", err)
+	}
+
+	// Verify that no actual changes were made (original data should still exist)
+	rows, err := db.Query("SELECT COUNT(*) FROM categories WHERE id = 99")
+	if err != nil {
+		t.Fatalf("Failed to query test data: %v", err)
+	}
+	defer rows.Close()
+
+	var count int
+	if rows.Next() {
+		err = rows.Scan(&count)
+		if err != nil {
+			t.Fatalf("Failed to scan count: %v", err)
+		}
+	}
+
+	if count != 1 {
+		t.Errorf("Expected existing data to remain unchanged in dry-run mode, but category was modified")
+	}
+
+	// Verify that new data was not inserted
+	rows2, err := db.Query("SELECT COUNT(*) FROM categories WHERE id IN (1, 2)")
+	if err != nil {
+		t.Fatalf("Failed to query for new data: %v", err)
+	}
+	defer rows2.Close()
+
+	var newCount int
+	if rows2.Next() {
+		err = rows2.Scan(&newCount)
+		if err != nil {
+			t.Fatalf("Failed to scan new count: %v", err)
+		}
+	}
+
+	if newCount != 0 {
+		t.Errorf("Expected no new data to be inserted in dry-run mode, but found %d new records", newCount)
+	}
+}

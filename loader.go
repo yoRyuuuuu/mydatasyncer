@@ -71,8 +71,9 @@ func (l *CSVLoader) WithDelimiter(delimiter rune) *CSVLoader {
 }
 
 // Load loads data from CSV file.
-// The 'columns' argument is ignored for CSVLoader; column names are derived from the CSV header.
-func (l *CSVLoader) Load(_ []string) ([]DataRecord, error) {
+// If 'columns' is specified, only those columns will be included in the result.
+// If 'columns' is empty, all columns from the CSV header will be included.
+func (l *CSVLoader) Load(columns []string) ([]DataRecord, error) {
 	file, err := os.Open(l.FilePath)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open file '%s': %w", l.FilePath, err)
@@ -99,6 +100,23 @@ func (l *CSVLoader) Load(_ []string) ([]DataRecord, error) {
 		return nil, fmt.Errorf("error reading CSV data rows from '%s': %w", l.FilePath, err)
 	}
 
+	// Determine which columns to include in the result
+	var targetColumns []string
+	if len(columns) == 0 {
+		// If no columns specified, use all columns from CSV header
+		targetColumns = headerNames
+	} else {
+		// Filter to only include specified columns that exist in CSV header
+		for _, col := range columns {
+			for _, headerCol := range headerNames {
+				if col == headerCol {
+					targetColumns = append(targetColumns, col)
+					break
+				}
+			}
+		}
+	}
+
 	var records []DataRecord
 	for i, row := range csvRows {
 		// Line number reported to user should be i+2 because 1 for header, 1 for 0-indexed loop
@@ -106,8 +124,14 @@ func (l *CSVLoader) Load(_ []string) ([]DataRecord, error) {
 			return nil, fmt.Errorf("CSV file '%s', line %d: column count (%d) does not match header column count (%d)", l.FilePath, i+2, len(row), len(headerNames))
 		}
 		record := make(DataRecord)
+		// Create a map of all data from the row
+		allData := make(map[string]any)
 		for j, colName := range headerNames {
-			record[colName] = convertValue(row[j])
+			allData[colName] = convertValue(row[j])
+		}
+		// Include only target columns in the result
+		for _, colName := range targetColumns {
+			record[colName] = allData[colName]
 		}
 		records = append(records, record)
 	}
@@ -189,4 +213,79 @@ func GetLoader(filePath string) (Loader, error) {
 	default:
 		return nil, fmt.Errorf("unsupported file type: '%s'. Only .csv and .json are supported", ext)
 	}
+}
+
+// MultiTableData represents data loaded from multiple files, keyed by table name
+type MultiTableData map[string][]DataRecord
+
+// MultiTableLoader handles loading data from multiple files for multi-table synchronization
+type MultiTableLoader struct {
+	TableConfigs []TableSyncConfig
+}
+
+// NewMultiTableLoader creates a new multi-table loader instance
+func NewMultiTableLoader(tableConfigs []TableSyncConfig) *MultiTableLoader {
+	return &MultiTableLoader{
+		TableConfigs: tableConfigs,
+	}
+}
+
+// LoadAll loads data from all configured table files
+// Returns a map where keys are table names and values are the loaded records
+func (ml *MultiTableLoader) LoadAll() (MultiTableData, error) {
+	if len(ml.TableConfigs) == 0 {
+		return nil, fmt.Errorf("no table configurations provided")
+	}
+
+	result := make(MultiTableData)
+
+	for _, tableConfig := range ml.TableConfigs {
+		// Create appropriate loader for each file
+		loader, err := GetLoader(tableConfig.FilePath)
+		if err != nil {
+			return nil, fmt.Errorf("error creating loader for table '%s' file '%s': %w", tableConfig.Name, tableConfig.FilePath, err)
+		}
+
+		// Load data from the file
+		records, err := loader.Load(tableConfig.Columns)
+		if err != nil {
+			return nil, fmt.Errorf("error loading data for table '%s' from file '%s': %w", tableConfig.Name, tableConfig.FilePath, err)
+		}
+
+		// Store the loaded records mapped by table name
+		result[tableConfig.Name] = records
+	}
+
+	return result, nil
+}
+
+// LoadForTable loads data for a specific table by name
+func (ml *MultiTableLoader) LoadForTable(tableName string) ([]DataRecord, error) {
+	for _, tableConfig := range ml.TableConfigs {
+		if tableConfig.Name == tableName {
+			loader, err := GetLoader(tableConfig.FilePath)
+			if err != nil {
+				return nil, fmt.Errorf("error creating loader for table '%s' file '%s': %w", tableConfig.Name, tableConfig.FilePath, err)
+			}
+
+			records, err := loader.Load(tableConfig.Columns)
+			if err != nil {
+				return nil, fmt.Errorf("error loading data for table '%s' from file '%s': %w", tableConfig.Name, tableConfig.FilePath, err)
+			}
+
+			return records, nil
+		}
+	}
+
+	return nil, fmt.Errorf("table configuration not found for '%s'", tableName)
+}
+
+// ValidateFilePaths checks if all configured file paths exist and are readable
+func (ml *MultiTableLoader) ValidateFilePaths() error {
+	for _, tableConfig := range ml.TableConfigs {
+		if _, err := os.Stat(tableConfig.FilePath); os.IsNotExist(err) {
+			return fmt.Errorf("file does not exist for table '%s': %s", tableConfig.Name, tableConfig.FilePath)
+		}
+	}
+	return nil
 }

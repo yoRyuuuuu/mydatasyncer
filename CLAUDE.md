@@ -4,90 +4,113 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-mydatasyncer is a Go database synchronization utility that efficiently syncs data from CSV/JSON files to relational databases. It supports two modes: complete overwrite and differential synchronization with smart change detection.
+mydatasyncer is a data synchronization utility that synchronizes data from CSV and JSON files to MySQL databases. It supports two sync modes:
 
-## Development Commands
+- **Overwrite mode**: Completely replaces all existing data in the target table
+- **Differential mode**: Updates only changed records, adds new records, and optionally deletes records not in the source file
 
-```bash
-# Build and test
-go build                         # Build binary
-go install                       # Install to GOPATH/bin
-go test ./...                   # Run all tests
-go test -cover ./...            # Run with coverage (current: 87.2%)
-go test -v ./...                # Verbose test output
-go test -v -run TestCSVLoader   # Run specific test
-go test -count=1 ./...          # Run tests without cache
-
-# Development environment
-docker compose up -d            # Start MySQL test database
-docker compose down             # Stop test database
-
-# Run the tool
-./mydatasyncer --config config.yml           # Use specific config
-./mydatasyncer --config config.yml --dry-run # Preview changes only
-./mydatasyncer                                # Use mydatasyncer.yml
-```
+Key features:
+- **Multi-table synchronization**: Supports synchronizing multiple tables with dependency-aware ordering
+- **Parent-child relationships**: Automatic sync order determination based on foreign key dependencies
+- **Circular dependency detection**: Validates table dependency graphs to prevent infinite loops
 
 ## Architecture
 
-### Core Components
-- **`main.go`**: CLI orchestration and argument parsing
-- **`config.go`**: YAML configuration management with validation
-- **`dbsync.go`**: Database synchronization engine with transaction support
-- **`loader.go`**: File format abstraction (CSV/JSON auto-detection)
+The codebase follows a modular design:
 
-### Key Design Patterns
-- **Interface-based file loading**: `Loader` interface abstracts CSV/JSON handling
-- **Type-safe primary keys**: `PrimaryKey` struct handles mixed data types consistently
-- **Transaction-wrapped operations**: All database operations use transactions for integrity
-- **Bulk operations**: Efficient INSERT/UPDATE/DELETE for large datasets
+- `main.go`: Entry point, command-line parsing, and application flow orchestration
+- `config.go`: Configuration management using YAML files with sensible defaults
+- `loader.go`: File format abstraction layer (supports CSV and JSON formats)
+- `dbsync.go`: Core synchronization logic including transaction management and bulk operations
+- `compose.yml`: Docker setup for MySQL development environment
 
-### Synchronization Modes
-- **Overwrite**: Complete table replacement
-- **Differential**: Smart sync that only updates changed records, adds new ones, optionally deletes missing ones
+Key architectural patterns:
+- Transaction-based operations ensure data integrity (all-or-nothing approach)
+- Bulk operations for performance with large datasets
+- Column mapping between file headers and database schema
+- Automatic column detection for both CSV and JSON formats
+- Type-preserving JSON value conversion to maintain data integrity
+- Dry-run mode for safe change preview
+- Immutable column protection to preserve system metadata
+- Dependency graph construction with topological sorting for multi-table sync ordering
 
-## Configuration Structure
+## Development Commands
 
-Configuration is YAML-based with these key sections:
-```yaml
-db:
-  dsn: "required database connection string"
-sync:
-  filePath: "path to CSV/JSON file"
-  tableName: "target database table"
-  columns: ["column", "list"]
-  primaryKey: "primary key column"
-  syncMode: "diff" | "overwrite"
-  deleteNotInFile: true/false
-  timestampColumns: ["auto-managed timestamp columns"]
-  immutableColumns: ["protected columns"]
+### Building and Running
+```bash
+# Build the application
+go build
+
+# Run with default config (mydatasyncer.yml)
+./mydatasyncer
+
+# Run with custom config
+./mydatasyncer --config config.yml
+
+# Preview changes without applying them
+./mydatasyncer --dry-run
 ```
 
-## Testing
+### Testing
+```bash
+# Run all tests
+go test ./...
 
-The project has comprehensive test coverage (87.2%) with:
-- **Unit tests**: Individual component testing
-- **Integration tests**: End-to-end database operations using Docker MySQL
-- **Edge case testing**: Invalid data, malformed configs, connection failures
-- **Test data**: Extensive `testdata/` directory with various scenarios
+# Run tests with coverage
+go test -cover ./...
 
-Test files mirror main components: `*_test.go` files contain tests for corresponding modules.
+# Run specific test files
+go test -v -run TestCSVLoader
+go test -v -run TestJSONLoader
+go test -v -run TestConvertJSONValueToString
+go test -v -run TestE2ESyncJSON
 
-## Key Dependencies
+# Run single test case
+go test -v -run "TestJSONLoader_Load_Success/precise_type_conversion_handling"
+```
 
-- `github.com/go-sql-driver/mysql` - MySQL database driver
-- `github.com/goccy/go-yaml` - YAML configuration parsing
-- `github.com/google/go-cmp` - Deep comparison utilities for testing
+### Development Environment
+```bash
+# Start MySQL database for development
+docker compose up -d
 
-## Development Notes
+# Stop development environment
+docker compose down
+```
 
-- Always use the Docker environment for consistent database testing
-- The tool requires explicit DSN configuration for security (no defaults)
-- Dry-run mode is available for safe change preview with detailed execution plans
-- All database operations are transaction-wrapped with automatic rollback on errors
-- File format detection is automatic (CSV/JSON) based on file extension
-- Primary key handling supports mixed data types (string/int) with type-safe comparisons
-- Timestamp columns are auto-managed if configured (created_at/updated_at)
-- Immutable columns are protected from updates during synchronization
-- Bulk operations are used for efficient large dataset handling
-- Comprehensive test coverage (87.2%) with edge case and error scenario testing
+## Key Implementation Details
+
+### Configuration System
+- YAML-based configuration with fallback to sensible defaults
+- Supports both single-table sync (legacy `sync` config) and multi-table sync (`tables` array)
+- Dependency-aware table ordering with foreign key relationship support
+- Circular dependency detection with detailed error reporting
+- Supports timestamp columns (created_at, updated_at) with automatic management
+- Immutable columns prevent accidental modification of system fields
+- Primary key requirement for differential sync mode
+
+### Data Processing Pipeline
+1. Load and validate configuration (includes dependency graph validation for multi-table sync)
+2. Establish database connection with transaction support
+3. For multi-table sync: determine sync order using topological sort (insert: parent→child, delete: child→parent)
+4. Load data from file using appropriate loader (CSV or JSON, auto-detected by file extension)
+5. Determine actual sync columns (intersection of file headers, DB schema, and config)
+6. Execute sync operations (overwrite or differential) within transaction
+7. Commit or rollback based on success/failure
+
+### Column Mapping Logic
+The system automatically determines which columns to sync based on:
+- File headers (CSV headers or JSON object keys from first record)
+- Database table schema
+- Optional configuration filter (`sync.columns`)
+- Primary key requirements for differential mode
+
+### File Format Support
+- **CSV**: Headers read from first row, values used as-is
+- **JSON**: Must be an array of objects. Column names auto-detected from first object's keys if not specified in config. Values converted to strings with type preservation (integers, floats, booleans, null handled appropriately)
+
+This ensures robust handling of schema mismatches and provides clear error messages.
+
+## Code Style
+- Think and write comments in English (following project conventions)
+- Go standard formatting and naming conventions

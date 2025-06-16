@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/goccy/go-yaml"
 )
@@ -12,7 +14,7 @@ type DBConfig struct {
 	DSN string `yaml:"dsn"` // Data Source Name (example: "user:password@tcp(127.0.0.1:3306)/dbname")
 }
 
-// SyncConfig represents data synchronization settings
+// SyncConfig represents data synchronization settings (legacy single table config)
 type SyncConfig struct {
 	FilePath         string   `yaml:"filePath"`         // Input file path
 	TableName        string   `yaml:"tableName"`        // Target table name
@@ -24,11 +26,25 @@ type SyncConfig struct {
 	DeleteNotInFile  bool     `yaml:"deleteNotInFile"`  // Whether to delete records not in file when using diff mode
 }
 
+// TableSyncConfig represents synchronization settings for a single table
+type TableSyncConfig struct {
+	Name             string   `yaml:"name"`             // Target table name
+	FilePath         string   `yaml:"filePath"`         // Input file path
+	Columns          []string `yaml:"columns"`          // DB column names corresponding to file columns (order is important)
+	TimestampColumns []string `yaml:"timestampColumns"` // Column names to set current timestamp on insert/update
+	ImmutableColumns []string `yaml:"immutableColumns"` // Column names that should not be updated in diff mode
+	PrimaryKey       string   `yaml:"primaryKey"`       // Primary key column name (required for differential update)
+	SyncMode         string   `yaml:"syncMode"`         // "overwrite" or "diff" (differential)
+	DeleteNotInFile  bool     `yaml:"deleteNotInFile"`  // Whether to delete records not in file when using diff mode
+	Dependencies     []string `yaml:"dependencies"`     // List of table names this table depends on (foreign key parents)
+}
+
 // Config represents configuration information
 type Config struct {
-	DB     DBConfig   `yaml:"db"`
-	Sync   SyncConfig `yaml:"sync"`
-	DryRun bool       `yaml:"dryRun"` // Enable dry-run mode
+	DB     DBConfig          `yaml:"db"`
+	Sync   SyncConfig        `yaml:"sync"`             // Legacy single table sync config (for backward compatibility)
+	Tables []TableSyncConfig `yaml:"tables,omitempty"` // Multi-table sync config
+	DryRun bool              `yaml:"dryRun"`           // Enable dry-run mode
 }
 
 // NewDefaultConfig returns a Config struct with default values
@@ -121,6 +137,18 @@ func ValidateConfig(cfg Config) error {
 		return fmt.Errorf("database DSN is required")
 	}
 
+	// Check if using multi-table sync or legacy single table sync
+	if len(cfg.Tables) > 0 || (cfg.Sync.FilePath == "" && cfg.Sync.TableName == "") {
+		// Multi-table sync validation (either has Tables array or empty Sync config)
+		return validateMultiTableConfig(cfg)
+	} else {
+		// Legacy single table sync validation
+		return validateSingleTableConfig(cfg)
+	}
+}
+
+// validateSingleTableConfig validates legacy single table configuration
+func validateSingleTableConfig(cfg Config) error {
 	// Check Sync configuration
 	if cfg.Sync.FilePath == "" {
 		return fmt.Errorf("sync file path is required")
@@ -135,6 +163,318 @@ func ValidateConfig(cfg Config) error {
 	if cfg.Sync.SyncMode == "diff" && cfg.Sync.PrimaryKey == "" {
 		return fmt.Errorf("primary key is required for diff sync mode")
 	}
+	return nil
+}
+
+// validateMultiTableConfig validates multi-table configuration
+func validateMultiTableConfig(cfg Config) error {
+	if err := validateTablesBasicFields(cfg.Tables); err != nil {
+		return err
+	}
+	if err := validateTableDependencies(cfg.Tables); err != nil {
+		return err
+	}
+	return validateNoCycles(cfg.Tables)
+}
+
+// validateTablesBasicFields validates basic fields and checks for duplicates
+func validateTablesBasicFields(tables []TableSyncConfig) error {
+	if len(tables) == 0 {
+		return fmt.Errorf("at least one table configuration is required in tables array")
+	}
+
+	tableNames := make(map[string]bool)
+	for i, table := range tables {
+		// Check required fields
+		if table.Name == "" {
+			return fmt.Errorf("table[%d]: table name is required", i)
+		}
+		if table.FilePath == "" {
+			return fmt.Errorf("table[%d] (%s): file path is required", i, table.Name)
+		}
+		if table.SyncMode != "overwrite" && table.SyncMode != "diff" {
+			return fmt.Errorf("table[%d] (%s): sync mode must be either 'overwrite' or 'diff'", i, table.Name)
+		}
+		if table.SyncMode == "diff" && table.PrimaryKey == "" {
+			return fmt.Errorf("table[%d] (%s): primary key is required for diff sync mode", i, table.Name)
+		}
+
+		// Check for duplicate table names
+		if tableNames[table.Name] {
+			return fmt.Errorf("table[%d]: duplicate table name '%s'", i, table.Name)
+		}
+		tableNames[table.Name] = true
+	}
 
 	return nil
+}
+
+// validateTableDependencies validates that all dependencies exist in the configuration
+func validateTableDependencies(tables []TableSyncConfig) error {
+	// Create a map of table names for efficient lookup
+	tableNames := make(map[string]bool)
+	for _, table := range tables {
+		tableNames[table.Name] = true
+	}
+
+	// Validate dependencies
+	for i, table := range tables {
+		for _, dep := range table.Dependencies {
+			if !tableNames[dep] {
+				return fmt.Errorf("table[%d] (%s): dependency '%s' not found in configuration", i, table.Name, dep)
+			}
+		}
+	}
+
+	return nil
+}
+
+// CircularDependencyError represents an error with circular dependency information
+type CircularDependencyError struct {
+	Cycle []string
+}
+
+func (e *CircularDependencyError) Error() string {
+	if len(e.Cycle) == 0 {
+		return "circular dependency detected"
+	}
+	return fmt.Sprintf("circular dependency detected: %s", formatCycle(e.Cycle))
+}
+
+// formatCycle formats a dependency cycle for display
+func formatCycle(cycle []string) string {
+	if len(cycle) == 0 {
+		return ""
+	}
+	if len(cycle) == 1 {
+		return fmt.Sprintf("%s -> %s", cycle[0], cycle[0])
+	}
+	// Show the cycle with the first element repeated at the end to show the loop
+	return fmt.Sprintf("%s -> %s", strings.Join(cycle, " -> "), cycle[0])
+}
+
+// DependencyGraph represents a dependency graph for table synchronization
+type DependencyGraph struct {
+	adjacencyList map[string][]string
+	inDegree      map[string]int
+}
+
+// NewDependencyGraph creates a new dependency graph from table configurations
+func NewDependencyGraph(tables []TableSyncConfig) *DependencyGraph {
+	graph := &DependencyGraph{
+		adjacencyList: make(map[string][]string),
+		inDegree:      make(map[string]int),
+	}
+
+	// Initialize all tables
+	for _, table := range tables {
+		graph.adjacencyList[table.Name] = []string{}
+		graph.inDegree[table.Name] = 0
+	}
+
+	// Build dependency edges (parent -> child)
+	for _, table := range tables {
+		for _, dep := range table.Dependencies {
+			graph.adjacencyList[dep] = append(graph.adjacencyList[dep], table.Name)
+			graph.inDegree[table.Name]++
+		}
+	}
+
+	return graph
+}
+
+// DetectCycles detects circular dependencies and returns detailed error information
+func (g *DependencyGraph) DetectCycles() error {
+	// Create a copy of inDegree to avoid modifying the original
+	inDegreeCopy := make(map[string]int)
+	for k, v := range g.inDegree {
+		inDegreeCopy[k] = v
+	}
+
+	// Kahn's algorithm for cycle detection
+	queue := []string{}
+	for tableName, degree := range inDegreeCopy {
+		if degree == 0 {
+			queue = append(queue, tableName)
+		}
+	}
+
+	processed := 0
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		processed++
+
+		for _, neighbor := range g.adjacencyList[current] {
+			inDegreeCopy[neighbor]--
+			if inDegreeCopy[neighbor] == 0 {
+				queue = append(queue, neighbor)
+			}
+		}
+	}
+
+	if processed != len(g.inDegree) {
+		// Find tables involved in cycles
+		cycleNodes := []string{}
+		for tableName, degree := range inDegreeCopy {
+			if degree > 0 {
+				cycleNodes = append(cycleNodes, tableName)
+			}
+		}
+
+		// Try to find a specific cycle path
+		cycle := g.findCyclePath(cycleNodes)
+		return &CircularDependencyError{Cycle: cycle}
+	}
+
+	return nil
+}
+
+// findCyclePath attempts to find a specific dependency cycle path
+func (g *DependencyGraph) findCyclePath(cycleNodes []string) []string {
+	if len(cycleNodes) == 0 {
+		return []string{}
+	}
+
+	// Use DFS to find a cycle starting from the first cycle node
+	visited := make(map[string]bool)
+	recStack := make(map[string]bool)
+	path := []string{}
+
+	for _, node := range cycleNodes {
+		if !visited[node] {
+			if cycle := g.dfsForCycle(node, visited, recStack, path); len(cycle) > 0 {
+				return cycle
+			}
+		}
+	}
+
+	// If we can't find a specific path, return the cycle nodes
+	return cycleNodes
+}
+
+// dfsForCycle performs DFS to find a cycle path
+func (g *DependencyGraph) dfsForCycle(node string, visited, recStack map[string]bool, path []string) []string {
+	visited[node] = true
+	recStack[node] = true
+	path = append(path, node)
+
+	for _, neighbor := range g.adjacencyList[node] {
+		if !visited[neighbor] {
+			if cycle := g.dfsForCycle(neighbor, visited, recStack, path); len(cycle) > 0 {
+				return cycle
+			}
+		} else if recStack[neighbor] {
+			// Found a cycle - extract the cycle path
+			cycleStart := -1
+			for i, p := range path {
+				if p == neighbor {
+					cycleStart = i
+					break
+				}
+			}
+			if cycleStart >= 0 {
+				return path[cycleStart:]
+			}
+		}
+	}
+
+	recStack[node] = false
+	return []string{}
+}
+
+// validateNoCycles performs topological sort to detect circular dependencies
+func validateNoCycles(tables []TableSyncConfig) error {
+	graph := NewDependencyGraph(tables)
+	return graph.DetectCycles()
+}
+
+// GetTopologicalOrder returns the topological ordering of tables based on dependencies
+func (g *DependencyGraph) GetTopologicalOrder() ([]string, error) {
+	// Create a copy of inDegree to avoid modifying the original
+	inDegreeCopy := make(map[string]int)
+	for k, v := range g.inDegree {
+		inDegreeCopy[k] = v
+	}
+
+	// Kahn's algorithm for topological sorting
+	queue := []string{}
+	for tableName, degree := range inDegreeCopy {
+		if degree == 0 {
+			queue = append(queue, tableName)
+		}
+	}
+	// Sort queue for deterministic ordering
+	sort.Strings(queue)
+
+	var sortedOrder []string
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		sortedOrder = append(sortedOrder, current)
+
+		neighbors := g.adjacencyList[current]
+		for _, neighbor := range neighbors {
+			inDegreeCopy[neighbor]--
+			if inDegreeCopy[neighbor] == 0 {
+				queue = append(queue, neighbor)
+			}
+		}
+		// Keep queue sorted for deterministic ordering
+		if len(queue) > 1 {
+			sort.Strings(queue)
+		}
+	}
+
+	// Check if all tables were processed (no cycles)
+	if len(sortedOrder) != len(g.inDegree) {
+		// Find the cycle for better error reporting
+		if err := g.DetectCycles(); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("circular dependency detected, cannot determine topological order")
+	}
+
+	return sortedOrder, nil
+}
+
+// GetSyncOrder determines the order of table synchronization based on dependencies
+// Returns two slices: insertOrder (parent->child) and deleteOrder (child->parent)
+func GetSyncOrder(tables []TableSyncConfig) (insertOrder []string, deleteOrder []string, err error) {
+	if len(tables) == 0 {
+		return nil, nil, fmt.Errorf("no tables provided")
+	}
+
+	graph := NewDependencyGraph(tables)
+	sortedOrder, err := graph.GetTopologicalOrder()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Insert order: parent -> child (same as topological order)
+	insertOrder = make([]string, len(sortedOrder))
+	copy(insertOrder, sortedOrder)
+
+	// Delete order: child -> parent (reverse of topological order)
+	deleteOrder = make([]string, len(sortedOrder))
+	for i, table := range sortedOrder {
+		deleteOrder[len(sortedOrder)-1-i] = table
+	}
+
+	return insertOrder, deleteOrder, nil
+}
+
+// GetTableConfig returns the configuration for a specific table by name
+func GetTableConfig(tables []TableSyncConfig, tableName string) (*TableSyncConfig, error) {
+	for _, table := range tables {
+		if table.Name == tableName {
+			return &table, nil
+		}
+	}
+	return nil, fmt.Errorf("table configuration not found for '%s'", tableName)
+}
+
+// IsMultiTableConfig returns true if the config uses multi-table configuration
+func IsMultiTableConfig(cfg Config) bool {
+	return len(cfg.Tables) > 0
 }

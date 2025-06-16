@@ -918,3 +918,344 @@ func bulkDelete(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 	_, err := tx.ExecContext(ctx, stmt, pkValues...)
 	return err
 }
+
+// syncMultipleTablesData synchronizes data for multiple tables with dependency order
+func syncMultipleTablesData(ctx context.Context, db *sql.DB, config Config) error {
+	if !IsMultiTableConfig(config) {
+		return fmt.Errorf("config does not contain multi-table configuration")
+	}
+
+	// 1. Load data from all files
+	// Note: For very large datasets, consider implementing streaming/batching to reduce memory usage
+	multiLoader := NewMultiTableLoader(config.Tables)
+	if err := multiLoader.ValidateFilePaths(); err != nil {
+		return fmt.Errorf("multi-table file validation error: %w", err)
+	}
+
+	allData, err := multiLoader.LoadAll()
+	if err != nil {
+		return fmt.Errorf("multi-table data loading error: %w", err)
+	}
+
+	log.Printf("Loaded data from %d table files", len(allData))
+	for tableName, records := range allData {
+		log.Printf("Table '%s': %d records", tableName, len(records))
+	}
+
+	// 2. Determine synchronization order based on dependencies
+	insertOrder, deleteOrder, err := GetSyncOrder(config.Tables)
+	if err != nil {
+		return fmt.Errorf("dependency order calculation error: %w", err)
+	}
+
+	log.Printf("Synchronization order - Insert: %v, Delete: %v", insertOrder, deleteOrder)
+
+	// 3. Start transaction for all table synchronizations
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("transaction start error: %w", err)
+	}
+	defer tx.Rollback() // Rollback on error or if commit fails
+
+	// 4. For dry-run mode, generate and display execution plan
+	if config.DryRun {
+		err = generateMultiTableExecutionPlan(ctx, db, tx, config, allData, insertOrder, deleteOrder)
+		if err != nil {
+			return fmt.Errorf("error generating multi-table execution plan: %w", err)
+		}
+		return nil // Dry run ends here
+	}
+
+	// 5. Execute synchronization in dependency order
+	err = executeMultiTableSync(ctx, tx, config, allData, insertOrder, deleteOrder)
+	if err != nil {
+		return fmt.Errorf("multi-table sync execution error: %w", err)
+	}
+
+	// 6. Commit transaction
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("transaction commit error: %w", err)
+	}
+
+	return nil
+}
+
+// generateMultiTableExecutionPlan creates and displays execution plan for multiple tables
+func generateMultiTableExecutionPlan(ctx context.Context, db *sql.DB, tx *sql.Tx, config Config, allData MultiTableData, insertOrder []string, deleteOrder []string) error {
+	log.Println("[DRY-RUN Mode] Multi-Table Execution Plan")
+	log.Println("====================================================")
+
+	// Show sync order
+	log.Printf("Insert/Update Order (parent→child): %v", insertOrder)
+	log.Printf("Delete Order (child→parent): %v", deleteOrder)
+	log.Println()
+
+	// Generate individual execution plans for each table
+	for i, tableName := range insertOrder {
+		log.Printf("[%d] Table: %s", i+1, tableName)
+		log.Println("----------------------------------------------------")
+
+		tableConfig, err := GetTableConfig(config.Tables, tableName)
+		if err != nil {
+			return fmt.Errorf("table config not found for '%s': %w", tableName, err)
+		}
+
+		// Create single-table config for compatibility with existing syncData function
+		singleConfig := Config{
+			DB:     config.DB,
+			DryRun: true,
+			Sync: SyncConfig{
+				FilePath:         tableConfig.FilePath,
+				TableName:        tableConfig.Name,
+				Columns:          tableConfig.Columns,
+				TimestampColumns: tableConfig.TimestampColumns,
+				ImmutableColumns: tableConfig.ImmutableColumns,
+				PrimaryKey:       tableConfig.PrimaryKey,
+				SyncMode:         tableConfig.SyncMode,
+				DeleteNotInFile:  tableConfig.DeleteNotInFile,
+			},
+		}
+
+		// Get table data
+		tableData, exists := allData[tableName]
+		if !exists {
+			log.Printf("No data loaded for table '%s'\n", tableName)
+			continue
+		}
+
+		// Use existing syncData function for planning (in dry-run mode)
+		err = syncData(ctx, db, singleConfig, tableData)
+		if err != nil {
+			return fmt.Errorf("execution plan generation error for table '%s': %w", tableName, err)
+		}
+		log.Println()
+	}
+
+	return nil
+}
+
+// executeMultiTableSync executes synchronization for multiple tables in dependency order
+func executeMultiTableSync(ctx context.Context, tx *sql.Tx, config Config, allData MultiTableData, insertOrder []string, deleteOrder []string) error {
+	// Phase 1: Delete operations in reverse dependency order (child→parent)
+	for _, tableName := range deleteOrder {
+		tableConfig, err := GetTableConfig(config.Tables, tableName)
+		if err != nil {
+			return fmt.Errorf("table config not found for '%s': %w", tableName, err)
+		}
+
+		// Skip deletion if deleteNotInFile is false
+		if !tableConfig.DeleteNotInFile {
+			continue
+		}
+
+		log.Printf("Processing deletes for table '%s'", tableName)
+		err = executeSingleTableSync(ctx, tx, config, tableName, allData[tableName], "delete")
+		if err != nil {
+			return fmt.Errorf("delete phase error for table '%s': %w", tableName, err)
+		}
+	}
+
+	// Phase 2: Insert/Update operations in dependency order (parent→child)
+	for _, tableName := range insertOrder {
+		log.Printf("Processing inserts/updates for table '%s'", tableName)
+		err := executeSingleTableSync(ctx, tx, config, tableName, allData[tableName], "insert_update")
+		if err != nil {
+			return fmt.Errorf("insert/update phase error for table '%s': %w", tableName, err)
+		}
+	}
+
+	return nil
+}
+
+// executeSingleTableSync executes synchronization for a single table within the transaction
+func executeSingleTableSync(ctx context.Context, tx *sql.Tx, config Config, tableName string, tableData []DataRecord, phase string) error {
+	if tx == nil {
+		return fmt.Errorf("transaction is nil")
+	}
+	if tableName == "" {
+		return fmt.Errorf("table name is empty")
+	}
+
+	tableConfig, err := GetTableConfig(config.Tables, tableName)
+	if err != nil {
+		return fmt.Errorf("table config not found for '%s': %w", tableName, err)
+	}
+
+	// Create single-table config for compatibility with existing functions
+	singleConfig := Config{
+		DB:     config.DB,
+		DryRun: false, // We're in execution mode
+		Sync: SyncConfig{
+			FilePath:         tableConfig.FilePath,
+			TableName:        tableConfig.Name,
+			Columns:          tableConfig.Columns,
+			TimestampColumns: tableConfig.TimestampColumns,
+			ImmutableColumns: tableConfig.ImmutableColumns,
+			PrimaryKey:       tableConfig.PrimaryKey,
+			SyncMode:         tableConfig.SyncMode,
+			DeleteNotInFile:  tableConfig.DeleteNotInFile,
+		},
+	}
+
+	// Determine actual columns to sync
+	var actualSyncColumns []string
+	if len(tableData) > 0 {
+		// Normal case: get headers from file records
+		fileHeaders := make([]string, 0, len(tableData[0]))
+		for k := range tableData[0] {
+			fileHeaders = append(fileHeaders, k)
+		}
+		slices.Sort(fileHeaders) // Ensure consistent order
+
+		dbTableCols, err := getTableColumns(ctx, tx, singleConfig.Sync.TableName)
+		if err != nil {
+			return fmt.Errorf("failed to get database table columns for '%s': %w", tableName, err)
+		}
+
+		actualSyncColumns, err = determineActualSyncColumns(fileHeaders, dbTableCols, singleConfig.Sync.Columns, singleConfig.Sync.PrimaryKey)
+		if err != nil {
+			return fmt.Errorf("failed to determine actual columns for table '%s': %w", tableName, err)
+		}
+	} else {
+		// Empty data case: use DB columns
+		dbTableCols, err := getTableColumns(ctx, tx, singleConfig.Sync.TableName)
+		if err != nil {
+			return fmt.Errorf("failed to get database table columns for '%s': %w", tableName, err)
+		}
+		actualSyncColumns = dbTableCols
+	}
+
+	// Execute phase-specific operations
+	switch phase {
+	case "delete":
+		// Only execute delete phase for diff mode with deleteNotInFile
+		if singleConfig.Sync.SyncMode == "diff" && singleConfig.Sync.DeleteNotInFile {
+			return executeDeletePhase(ctx, tx, singleConfig, tableData, actualSyncColumns)
+		}
+		return nil // Skip delete for other modes
+	case "insert_update":
+		return executeInsertUpdatePhase(ctx, tx, singleConfig, tableData, actualSyncColumns)
+	default:
+		return fmt.Errorf("unknown sync phase: %s", phase)
+	}
+}
+
+// executeDeletePhase handles delete operations for a single table in multi-table sync
+func executeDeletePhase(ctx context.Context, tx *sql.Tx, config Config, tableData []DataRecord, actualSyncColumns []string) error {
+	if config.Sync.SyncMode != "diff" {
+		return nil // Only diff mode supports delete operations
+	}
+
+	// Validate requirements for differential sync
+	if err := validateDiffSyncRequirements(config, actualSyncColumns); err != nil {
+		return fmt.Errorf("delete phase validation error: %w", err)
+	}
+
+	// Get current data from DB
+	dbRecords, _, err := getCurrentDBData(ctx, tx, config, actualSyncColumns)
+	if err != nil {
+		return fmt.Errorf("DB data retrieval error: %w", err)
+	}
+
+	// Find records to delete (records in DB but not in file)
+	fileKeys := make(map[string]bool)
+	for _, fileRecord := range tableData {
+		pk, isValid := extractPrimaryKeyValue(fileRecord, config.Sync.PrimaryKey)
+		if isValid {
+			fileKeys[pk.Str] = true
+		}
+	}
+
+	var toDelete []DataRecord
+	for pkStr, dbRecord := range dbRecords {
+		if !fileKeys[pkStr] {
+			toDelete = append(toDelete, dbRecord)
+		}
+	}
+
+	// Execute delete operations
+	if len(toDelete) > 0 {
+		err = bulkDelete(ctx, tx, config, toDelete)
+		if err != nil {
+			return fmt.Errorf("delete execution error: %w", err)
+		}
+		log.Printf("Table '%s': Deleted %d records", config.Sync.TableName, len(toDelete))
+	}
+
+	return nil
+}
+
+// executeInsertUpdatePhase handles insert and update operations for a single table in multi-table sync
+func executeInsertUpdatePhase(ctx context.Context, tx *sql.Tx, config Config, tableData []DataRecord, actualSyncColumns []string) error {
+	switch config.Sync.SyncMode {
+	case "overwrite":
+		return executeOverwritePhase(ctx, tx, config, tableData, actualSyncColumns)
+	case "diff":
+		return executeDiffInsertUpdatePhase(ctx, tx, config, tableData, actualSyncColumns)
+	default:
+		return fmt.Errorf("unknown sync mode: %s", config.Sync.SyncMode)
+	}
+}
+
+// executeOverwritePhase handles overwrite mode operations (delete existing + insert all)
+func executeOverwritePhase(ctx context.Context, tx *sql.Tx, config Config, tableData []DataRecord, actualSyncColumns []string) error {
+	// In overwrite mode for multi-table sync, we delete ALL existing data first
+	// This ensures a complete refresh of the table data
+	_, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", config.Sync.TableName))
+	if err != nil {
+		return fmt.Errorf("error deleting all data from table '%s': %w", config.Sync.TableName, err)
+	}
+	log.Printf("Table '%s': Deleted all existing data for overwrite", config.Sync.TableName)
+
+	// Insert all file records
+	if len(tableData) > 0 {
+		err := bulkInsert(ctx, tx, config, tableData, actualSyncColumns)
+		if err != nil {
+			return fmt.Errorf("insert execution error: %w", err)
+		}
+		log.Printf("Table '%s': Inserted %d records", config.Sync.TableName, len(tableData))
+	}
+
+	return nil
+}
+
+// executeDiffInsertUpdatePhase handles differential insert and update operations
+func executeDiffInsertUpdatePhase(ctx context.Context, tx *sql.Tx, config Config, tableData []DataRecord, actualSyncColumns []string) error {
+	// Validate requirements for differential sync
+	if err := validateDiffSyncRequirements(config, actualSyncColumns); err != nil {
+		return err
+	}
+
+	// Get current data from DB
+	dbRecords, _, err := getCurrentDBData(ctx, tx, config, actualSyncColumns)
+	if err != nil {
+		return fmt.Errorf("DB data retrieval error: %w", err)
+	}
+
+	// Compare file data with DB data to find insert/update operations
+	toInsert, toUpdate, _ := diffData(config, tableData, dbRecords, actualSyncColumns)
+
+	// Execute insert operations
+	if len(toInsert) > 0 {
+		err = bulkInsert(ctx, tx, config, toInsert, actualSyncColumns)
+		if err != nil {
+			return fmt.Errorf("insert execution error: %w", err)
+		}
+		log.Printf("Table '%s': Inserted %d records", config.Sync.TableName, len(toInsert))
+	}
+
+	// Execute update operations
+	if len(toUpdate) > 0 {
+		updateRecords := make([]DataRecord, len(toUpdate))
+		for i, op := range toUpdate {
+			updateRecords[i] = op.After
+		}
+		err = bulkUpdate(ctx, tx, config, updateRecords, actualSyncColumns)
+		if err != nil {
+			return fmt.Errorf("update execution error: %w", err)
+		}
+		log.Printf("Table '%s': Updated %d records", config.Sync.TableName, len(toUpdate))
+	}
+
+	return nil
+}
