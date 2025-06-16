@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-	"gopkg.in/yaml.v2"
+	"github.com/goccy/go-yaml"
 )
 
 // ConfigHelper provides utilities for creating test configurations

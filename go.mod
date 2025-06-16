@@ -6,7 +6,6 @@ require (
 	github.com/go-sql-driver/mysql v1.9.2
 	github.com/goccy/go-yaml v1.18.0
 	github.com/google/go-cmp v0.7.0
-	gopkg.in/yaml.v2 v2.4.0
 )
 
 require filippo.io/edwards25519 v1.1.0 // indirect
