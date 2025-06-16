@@ -2,11 +2,11 @@ package helpers
 
 import (
 	"fmt"
+	"github.com/goccy/go-yaml"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
-	"github.com/goccy/go-yaml"
 )
 
 // ConfigHelper provides utilities for creating test configurations
@@ -18,16 +18,16 @@ type ConfigHelper struct {
 // NewConfigHelper creates a new config helper
 func NewConfigHelper(t *testing.T) *ConfigHelper {
 	t.Helper()
-	
+
 	tempDir, err := os.MkdirTemp("", "config_test_")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
-	
+
 	t.Cleanup(func() {
 		os.RemoveAll(tempDir)
 	})
-	
+
 	return &ConfigHelper{
 		t:       t,
 		tempDir: tempDir,
@@ -41,14 +41,14 @@ type TestDBConfig struct {
 
 // TestSyncConfig represents synchronization configuration for tests
 type TestSyncConfig struct {
-	FilePath           string            `yaml:"filePath"`
-	TableName          string            `yaml:"tableName"`
-	Columns            []string          `yaml:"columns,omitempty"`
-	PrimaryKey         string            `yaml:"primaryKey"`
-	SyncMode           string            `yaml:"syncMode"`
-	DeleteNotInFile    bool              `yaml:"deleteNotInFile,omitempty"`
-	Timestamps         *TimestampConfig  `yaml:"timestamps,omitempty"`
-	ImmutableColumns   []string          `yaml:"immutableColumns,omitempty"`
+	FilePath         string           `yaml:"filePath"`
+	TableName        string           `yaml:"tableName"`
+	Columns          []string         `yaml:"columns,omitempty"`
+	PrimaryKey       string           `yaml:"primaryKey"`
+	SyncMode         string           `yaml:"syncMode"`
+	DeleteNotInFile  bool             `yaml:"deleteNotInFile,omitempty"`
+	Timestamps       *TimestampConfig `yaml:"timestamps,omitempty"`
+	ImmutableColumns []string         `yaml:"immutableColumns,omitempty"`
 }
 
 // TimestampConfig represents timestamp column configuration
@@ -171,24 +171,24 @@ func (ch *ConfigHelper) CreatePerformanceTestConfig(recordCount int) *TestConfig
 // SaveConfigToFile saves a configuration to a YAML file
 func (ch *ConfigHelper) SaveConfigToFile(config *TestConfig, filename string) string {
 	ch.t.Helper()
-	
+
 	filePath := filepath.Join(ch.tempDir, filename)
-	
+
 	// Create directory if needed
 	dir := filepath.Dir(filePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		ch.t.Fatalf("Failed to create directory %s: %v", dir, err)
 	}
-	
+
 	data, err := yaml.Marshal(config)
 	if err != nil {
 		ch.t.Fatalf("Failed to marshal config: %v", err)
 	}
-	
+
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		ch.t.Fatalf("Failed to write config file %s: %v", filePath, err)
 	}
-	
+
 	return filePath
 }
 
@@ -213,22 +213,22 @@ func (ch *ConfigHelper) CreateInvalidConfig(invalidationType string) *TestConfig
 		config := ch.CreateBasicConfig()
 		config.Sync.PrimaryKey = ""
 		return config
-		
+
 	case "invalid_sync_mode":
 		config := ch.CreateBasicConfig()
 		config.Sync.SyncMode = "invalid_mode"
 		return config
-		
+
 	case "missing_file_path":
 		config := ch.CreateBasicConfig()
 		config.Sync.FilePath = ""
 		return config
-		
+
 	case "missing_table_name":
 		config := ch.CreateBasicConfig()
 		config.Sync.TableName = ""
 		return config
-		
+
 	default:
 		ch.t.Fatalf("Unknown invalidation type: %s", invalidationType)
 		return nil
@@ -238,7 +238,7 @@ func (ch *ConfigHelper) CreateInvalidConfig(invalidationType string) *TestConfig
 // CreateConfigForFileFormat creates a configuration for specific file format testing
 func (ch *ConfigHelper) CreateConfigForFileFormat(format string) *TestConfig {
 	config := ch.CreateBasicConfig()
-	
+
 	switch format {
 	case "csv":
 		config.Sync.FilePath = "test_data.csv"
@@ -247,7 +247,7 @@ func (ch *ConfigHelper) CreateConfigForFileFormat(format string) *TestConfig {
 	default:
 		ch.t.Fatalf("Unsupported file format: %s", format)
 	}
-	
+
 	return config
 }
 
@@ -315,7 +315,7 @@ func (ch *ConfigHelper) GetTempDir() string {
 // CreateConfigVariation creates a configuration variation for parameterized tests
 func (ch *ConfigHelper) CreateConfigVariation(baseName string, variations map[string]interface{}) *TestConfig {
 	config := ch.CreateBasicConfig()
-	
+
 	for key, value := range variations {
 		switch key {
 		case "syncMode":
@@ -330,18 +330,18 @@ func (ch *ConfigHelper) CreateConfigVariation(baseName string, variations map[st
 			ch.t.Logf("Unknown configuration key: %s", key)
 		}
 	}
-	
+
 	return config
 }
 
 // ValidateConfig performs basic validation on a configuration
 func (ch *ConfigHelper) ValidateConfig(config *TestConfig) []string {
 	var errors []string
-	
+
 	if config.DB.DSN == "" {
 		errors = append(errors, "Database DSN is required")
 	}
-	
+
 	if config.Sync != nil {
 		if config.Sync.FilePath == "" {
 			errors = append(errors, "File path is required")
@@ -356,7 +356,7 @@ func (ch *ConfigHelper) ValidateConfig(config *TestConfig) []string {
 			errors = append(errors, "Sync mode must be 'diff' or 'overwrite'")
 		}
 	}
-	
+
 	return errors
 }
 

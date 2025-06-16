@@ -41,9 +41,9 @@ type TableSyncConfig struct {
 // Config represents configuration information
 type Config struct {
 	DB     DBConfig          `yaml:"db"`
-	Sync   SyncConfig        `yaml:"sync"`                      // Legacy single table sync config (for backward compatibility)
-	Tables []TableSyncConfig `yaml:"tables,omitempty"`          // Multi-table sync config
-	DryRun bool              `yaml:"dryRun"`                    // Enable dry-run mode
+	Sync   SyncConfig        `yaml:"sync"`             // Legacy single table sync config (for backward compatibility)
+	Tables []TableSyncConfig `yaml:"tables,omitempty"` // Multi-table sync config
+	DryRun bool              `yaml:"dryRun"`           // Enable dry-run mode
 }
 
 // NewDefaultConfig returns a Config struct with default values
@@ -248,13 +248,13 @@ func NewDependencyGraph(tables []TableSyncConfig) *DependencyGraph {
 		adjacencyList: make(map[string][]string),
 		inDegree:      make(map[string]int),
 	}
-	
+
 	// Initialize all tables
 	for _, table := range tables {
 		graph.adjacencyList[table.Name] = []string{}
 		graph.inDegree[table.Name] = 0
 	}
-	
+
 	// Build dependency edges (parent -> child)
 	for _, table := range tables {
 		for _, dep := range table.Dependencies {
@@ -262,7 +262,7 @@ func NewDependencyGraph(tables []TableSyncConfig) *DependencyGraph {
 			graph.inDegree[table.Name]++
 		}
 	}
-	
+
 	return graph
 }
 
@@ -273,7 +273,7 @@ func (g *DependencyGraph) DetectCycles() error {
 	for k, v := range g.inDegree {
 		inDegreeCopy[k] = v
 	}
-	
+
 	// Kahn's algorithm for cycle detection
 	queue := []string{}
 	for tableName, degree := range inDegreeCopy {
@@ -281,13 +281,13 @@ func (g *DependencyGraph) DetectCycles() error {
 			queue = append(queue, tableName)
 		}
 	}
-	
+
 	processed := 0
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
 		processed++
-		
+
 		for _, neighbor := range g.adjacencyList[current] {
 			inDegreeCopy[neighbor]--
 			if inDegreeCopy[neighbor] == 0 {
@@ -295,7 +295,7 @@ func (g *DependencyGraph) DetectCycles() error {
 			}
 		}
 	}
-	
+
 	if processed != len(g.inDegree) {
 		// Find tables involved in cycles
 		cycleNodes := []string{}
@@ -304,12 +304,12 @@ func (g *DependencyGraph) DetectCycles() error {
 				cycleNodes = append(cycleNodes, tableName)
 			}
 		}
-		
+
 		// Try to find a specific cycle path
 		cycle := g.findCyclePath(cycleNodes)
 		return &CircularDependencyError{Cycle: cycle}
 	}
-	
+
 	return nil
 }
 
@@ -318,12 +318,12 @@ func (g *DependencyGraph) findCyclePath(cycleNodes []string) []string {
 	if len(cycleNodes) == 0 {
 		return []string{}
 	}
-	
+
 	// Use DFS to find a cycle starting from the first cycle node
 	visited := make(map[string]bool)
 	recStack := make(map[string]bool)
 	path := []string{}
-	
+
 	for _, node := range cycleNodes {
 		if !visited[node] {
 			if cycle := g.dfsForCycle(node, visited, recStack, path); len(cycle) > 0 {
@@ -331,7 +331,7 @@ func (g *DependencyGraph) findCyclePath(cycleNodes []string) []string {
 			}
 		}
 	}
-	
+
 	// If we can't find a specific path, return the cycle nodes
 	return cycleNodes
 }
@@ -341,7 +341,7 @@ func (g *DependencyGraph) dfsForCycle(node string, visited, recStack map[string]
 	visited[node] = true
 	recStack[node] = true
 	path = append(path, node)
-	
+
 	for _, neighbor := range g.adjacencyList[node] {
 		if !visited[neighbor] {
 			if cycle := g.dfsForCycle(neighbor, visited, recStack, path); len(cycle) > 0 {
@@ -361,7 +361,7 @@ func (g *DependencyGraph) dfsForCycle(node string, visited, recStack map[string]
 			}
 		}
 	}
-	
+
 	recStack[node] = false
 	return []string{}
 }
@@ -379,7 +379,7 @@ func (g *DependencyGraph) GetTopologicalOrder() ([]string, error) {
 	for k, v := range g.inDegree {
 		inDegreeCopy[k] = v
 	}
-	
+
 	// Kahn's algorithm for topological sorting
 	queue := []string{}
 	for tableName, degree := range inDegreeCopy {
@@ -387,13 +387,13 @@ func (g *DependencyGraph) GetTopologicalOrder() ([]string, error) {
 			queue = append(queue, tableName)
 		}
 	}
-	
+
 	var sortedOrder []string
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
 		sortedOrder = append(sortedOrder, current)
-		
+
 		for _, neighbor := range g.adjacencyList[current] {
 			inDegreeCopy[neighbor]--
 			if inDegreeCopy[neighbor] == 0 {
@@ -401,7 +401,7 @@ func (g *DependencyGraph) GetTopologicalOrder() ([]string, error) {
 			}
 		}
 	}
-	
+
 	// Check if all tables were processed (no cycles)
 	if len(sortedOrder) != len(g.inDegree) {
 		// Find the cycle for better error reporting
@@ -410,7 +410,7 @@ func (g *DependencyGraph) GetTopologicalOrder() ([]string, error) {
 		}
 		return nil, fmt.Errorf("circular dependency detected, cannot determine topological order")
 	}
-	
+
 	return sortedOrder, nil
 }
 
@@ -426,17 +426,17 @@ func GetSyncOrder(tables []TableSyncConfig) (insertOrder []string, deleteOrder [
 	if err != nil {
 		return nil, nil, err
 	}
-	
+
 	// Insert order: parent -> child (same as topological order)
 	insertOrder = make([]string, len(sortedOrder))
 	copy(insertOrder, sortedOrder)
-	
+
 	// Delete order: child -> parent (reverse of topological order)
 	deleteOrder = make([]string, len(sortedOrder))
 	for i, table := range sortedOrder {
 		deleteOrder[len(sortedOrder)-1-i] = table
 	}
-	
+
 	return insertOrder, deleteOrder, nil
 }
 

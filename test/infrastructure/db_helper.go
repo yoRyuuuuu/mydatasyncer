@@ -121,7 +121,7 @@ func (helper *TestDBHelper) DropTable(tableName string) error {
 func (helper *TestDBHelper) DropAllTables() error {
 	// Drop in reverse dependency order
 	tables := []string{"order_items", "orders", "products", "categories", "data_types_test", "test_table"}
-	
+
 	for _, table := range tables {
 		if err := helper.DropTable(table); err != nil {
 			return fmt.Errorf("failed to drop table %s: %w", table, err)

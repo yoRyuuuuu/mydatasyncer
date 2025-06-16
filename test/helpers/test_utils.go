@@ -20,16 +20,16 @@ type TestHelper struct {
 // NewTestHelper creates a new test helper
 func NewTestHelper(t *testing.T) *TestHelper {
 	t.Helper()
-	
+
 	tempDir, err := os.MkdirTemp("", "test_helper_")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
-	
+
 	t.Cleanup(func() {
 		os.RemoveAll(tempDir)
 	})
-	
+
 	return &TestHelper{
 		t:       t,
 		tempDir: tempDir,
@@ -44,26 +44,26 @@ func (th *TestHelper) GetTempDir() string {
 // CreateTempFile creates a temporary file with the given content
 func (th *TestHelper) CreateTempFile(filename, content string) string {
 	th.t.Helper()
-	
+
 	filePath := filepath.Join(th.tempDir, filename)
-	
+
 	// Create directory if needed
 	dir := filepath.Dir(filePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		th.t.Fatalf("Failed to create directory %s: %v", dir, err)
 	}
-	
+
 	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
 		th.t.Fatalf("Failed to create temp file %s: %v", filePath, err)
 	}
-	
+
 	return filePath
 }
 
 // AssertEqual checks if two values are equal
 func (th *TestHelper) AssertEqual(expected, actual interface{}, msgAndArgs ...interface{}) {
 	th.t.Helper()
-	
+
 	if !reflect.DeepEqual(expected, actual) {
 		msg := "Values are not equal"
 		if len(msgAndArgs) > 0 {
@@ -76,7 +76,7 @@ func (th *TestHelper) AssertEqual(expected, actual interface{}, msgAndArgs ...in
 // AssertNotEqual checks if two values are not equal
 func (th *TestHelper) AssertNotEqual(expected, actual interface{}, msgAndArgs ...interface{}) {
 	th.t.Helper()
-	
+
 	if reflect.DeepEqual(expected, actual) {
 		msg := "Values should not be equal"
 		if len(msgAndArgs) > 0 {
@@ -89,7 +89,7 @@ func (th *TestHelper) AssertNotEqual(expected, actual interface{}, msgAndArgs ..
 // AssertNil checks if a value is nil
 func (th *TestHelper) AssertNil(value interface{}, msgAndArgs ...interface{}) {
 	th.t.Helper()
-	
+
 	if value != nil {
 		msg := "Expected nil value"
 		if len(msgAndArgs) > 0 {
@@ -102,7 +102,7 @@ func (th *TestHelper) AssertNil(value interface{}, msgAndArgs ...interface{}) {
 // AssertNotNil checks if a value is not nil
 func (th *TestHelper) AssertNotNil(value interface{}, msgAndArgs ...interface{}) {
 	th.t.Helper()
-	
+
 	if value == nil {
 		msg := "Expected non-nil value"
 		if len(msgAndArgs) > 0 {
@@ -115,7 +115,7 @@ func (th *TestHelper) AssertNotNil(value interface{}, msgAndArgs ...interface{})
 // AssertNoError checks if error is nil
 func (th *TestHelper) AssertNoError(err error, msgAndArgs ...interface{}) {
 	th.t.Helper()
-	
+
 	if err != nil {
 		msg := "Unexpected error"
 		if len(msgAndArgs) > 0 {
@@ -128,7 +128,7 @@ func (th *TestHelper) AssertNoError(err error, msgAndArgs ...interface{}) {
 // AssertError checks if error is not nil
 func (th *TestHelper) AssertError(err error, msgAndArgs ...interface{}) {
 	th.t.Helper()
-	
+
 	if err == nil {
 		msg := "Expected error but got nil"
 		if len(msgAndArgs) > 0 {
@@ -141,7 +141,7 @@ func (th *TestHelper) AssertError(err error, msgAndArgs ...interface{}) {
 // AssertContains checks if a string contains a substring
 func (th *TestHelper) AssertContains(str, substr string, msgAndArgs ...interface{}) {
 	th.t.Helper()
-	
+
 	if !strings.Contains(str, substr) {
 		msg := "String does not contain expected substring"
 		if len(msgAndArgs) > 0 {
@@ -154,7 +154,7 @@ func (th *TestHelper) AssertContains(str, substr string, msgAndArgs ...interface
 // AssertNotContains checks if a string does not contain a substring
 func (th *TestHelper) AssertNotContains(str, substr string, msgAndArgs ...interface{}) {
 	th.t.Helper()
-	
+
 	if strings.Contains(str, substr) {
 		msg := "String should not contain substring"
 		if len(msgAndArgs) > 0 {
@@ -167,15 +167,15 @@ func (th *TestHelper) AssertNotContains(str, substr string, msgAndArgs ...interf
 // AssertGreaterThan checks if a value is greater than another
 func (th *TestHelper) AssertGreaterThan(actual, expected interface{}, msgAndArgs ...interface{}) {
 	th.t.Helper()
-	
+
 	actualVal := reflect.ValueOf(actual)
 	expectedVal := reflect.ValueOf(expected)
-	
+
 	if actualVal.Kind() != expectedVal.Kind() {
 		th.t.Errorf("Cannot compare different types: %T vs %T", actual, expected)
 		return
 	}
-	
+
 	switch actualVal.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		if actualVal.Int() <= expectedVal.Int() {
@@ -201,7 +201,7 @@ func (th *TestHelper) AssertGreaterThan(actual, expected interface{}, msgAndArgs
 // AssertFileExists checks if a file exists
 func (th *TestHelper) AssertFileExists(filePath string, msgAndArgs ...interface{}) {
 	th.t.Helper()
-	
+
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		msg := "File does not exist"
 		if len(msgAndArgs) > 0 {
@@ -214,7 +214,7 @@ func (th *TestHelper) AssertFileExists(filePath string, msgAndArgs ...interface{
 // AssertFileNotExists checks if a file does not exist
 func (th *TestHelper) AssertFileNotExists(filePath string, msgAndArgs ...interface{}) {
 	th.t.Helper()
-	
+
 	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
 		msg := "File should not exist"
 		if len(msgAndArgs) > 0 {
@@ -227,13 +227,13 @@ func (th *TestHelper) AssertFileNotExists(filePath string, msgAndArgs ...interfa
 // RunWithTimeout runs a function with a timeout
 func (th *TestHelper) RunWithTimeout(timeout time.Duration, fn func()) {
 	th.t.Helper()
-	
+
 	done := make(chan bool, 1)
 	go func() {
 		fn()
 		done <- true
 	}()
-	
+
 	select {
 	case <-done:
 		// Function completed successfully
@@ -270,7 +270,7 @@ func CreateTestTable(th *TestHelper, db interface{}, tableName, schema string) {
 // Retry executes a function with retry logic
 func (th *TestHelper) Retry(maxAttempts int, delay time.Duration, fn func() error) {
 	th.t.Helper()
-	
+
 	var lastErr error
 	for i := 0; i < maxAttempts; i++ {
 		if err := fn(); err != nil {
@@ -283,14 +283,14 @@ func (th *TestHelper) Retry(maxAttempts int, delay time.Duration, fn func() erro
 			return // Success
 		}
 	}
-	
+
 	th.t.Errorf("Function failed after %d attempts. Last error: %v", maxAttempts, lastErr)
 }
 
 // Eventually waits for a condition to become true within a timeout
 func (th *TestHelper) Eventually(timeout time.Duration, interval time.Duration, condition func() bool, msgAndArgs ...interface{}) {
 	th.t.Helper()
-	
+
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if condition() {
@@ -298,7 +298,7 @@ func (th *TestHelper) Eventually(timeout time.Duration, interval time.Duration, 
 		}
 		time.Sleep(interval)
 	}
-	
+
 	msg := "Condition was not met within timeout"
 	if len(msgAndArgs) > 0 {
 		msg = fmt.Sprintf(msgAndArgs[0].(string), msgAndArgs[1:]...)
@@ -338,12 +338,12 @@ func CreateMockConfig(overrides map[string]interface{}) map[string]interface{} {
 			"syncMode":   "diff",
 		},
 	}
-	
+
 	// Apply overrides
 	for key, value := range overrides {
 		config[key] = value
 	}
-	
+
 	return config
 }
 
@@ -351,23 +351,23 @@ func CreateMockConfig(overrides map[string]interface{}) map[string]interface{} {
 func CompareSlices(expected, actual interface{}) (bool, string) {
 	expectedVal := reflect.ValueOf(expected)
 	actualVal := reflect.ValueOf(actual)
-	
+
 	if expectedVal.Kind() != reflect.Slice || actualVal.Kind() != reflect.Slice {
 		return false, "Both values must be slices"
 	}
-	
+
 	if expectedVal.Len() != actualVal.Len() {
-		return false, fmt.Sprintf("Length mismatch: expected %d, got %d", 
+		return false, fmt.Sprintf("Length mismatch: expected %d, got %d",
 			expectedVal.Len(), actualVal.Len())
 	}
-	
+
 	for i := 0; i < expectedVal.Len(); i++ {
 		if !reflect.DeepEqual(expectedVal.Index(i).Interface(), actualVal.Index(i).Interface()) {
 			return false, fmt.Sprintf("Element at index %d differs: expected %v, got %v",
 				i, expectedVal.Index(i).Interface(), actualVal.Index(i).Interface())
 		}
 	}
-	
+
 	return true, ""
 }
 

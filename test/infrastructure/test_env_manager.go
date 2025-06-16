@@ -12,12 +12,12 @@ import (
 
 // TestEnvironment represents an isolated test environment
 type TestEnvironment struct {
-	ID       string
-	DB       *sql.DB
-	TempDir  string
-	Metrics  *TestMetrics
-	cleanup  []func() error
-	mutex    sync.RWMutex
+	ID      string
+	DB      *sql.DB
+	TempDir string
+	Metrics *TestMetrics
+	cleanup []func() error
+	mutex   sync.RWMutex
 }
 
 // TestEnvManager manages multiple isolated test environments
@@ -53,13 +53,13 @@ type TestMetrics struct {
 // NewTestEnvManager creates a new test environment manager
 func NewTestEnvManager() *TestEnvManager {
 	config := getTestDBConfig()
-	
+
 	// Connect to root database for creating/dropping test databases
 	rootDB, err := sql.Open("mysql", config.RootDSN)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to connect to root database: %v", err))
 	}
-	
+
 	return &TestEnvManager{
 		baseConfig: config,
 		dbTemplate: "test_env_%s_%d",
@@ -71,16 +71,16 @@ func NewTestEnvManager() *TestEnvManager {
 func (tem *TestEnvManager) CreateEnvironment(testName string) (*TestEnvironment, error) {
 	tem.mutex.Lock()
 	defer tem.mutex.Unlock()
-	
+
 	// Generate unique environment ID
 	envID := fmt.Sprintf(tem.dbTemplate, testName, time.Now().UnixNano())
-	
+
 	// Create dedicated database
 	db, err := tem.createIsolatedDB(envID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create isolated DB: %w", err)
 	}
-	
+
 	// Create temporary directory
 	tempDir, err := os.MkdirTemp("", fmt.Sprintf("test_%s_", testName))
 	if err != nil {
@@ -88,7 +88,7 @@ func (tem *TestEnvManager) CreateEnvironment(testName string) (*TestEnvironment,
 		tem.dropDatabase(envID)
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
-	
+
 	env := &TestEnvironment{
 		ID:      envID,
 		DB:      db,
@@ -96,12 +96,12 @@ func (tem *TestEnvManager) CreateEnvironment(testName string) (*TestEnvironment,
 		Metrics: NewTestMetrics(),
 		cleanup: []func() error{},
 	}
-	
+
 	// Register cleanup functions
 	env.RegisterCleanup(func() error { return os.RemoveAll(tempDir) })
 	env.RegisterCleanup(func() error { return tem.dropDatabase(envID) })
 	env.RegisterCleanup(func() error { return db.Close() })
-	
+
 	tem.environments.Store(envID, env)
 	return env, nil
 }
@@ -113,7 +113,7 @@ func (tem *TestEnvManager) createIsolatedDB(dbName string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create database %s: %w", dbName, err)
 	}
-	
+
 	// Create DSN for the new database
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true",
 		tem.baseConfig.User,
@@ -121,21 +121,21 @@ func (tem *TestEnvManager) createIsolatedDB(dbName string) (*sql.DB, error) {
 		tem.baseConfig.Host,
 		tem.baseConfig.Port,
 		dbName)
-	
+
 	// Connect to the new database
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		tem.dropDatabase(dbName)
 		return nil, fmt.Errorf("failed to connect to database %s: %w", dbName, err)
 	}
-	
+
 	// Test connection
 	if err := db.Ping(); err != nil {
 		db.Close()
 		tem.dropDatabase(dbName)
 		return nil, fmt.Errorf("failed to ping database %s: %w", dbName, err)
 	}
-	
+
 	return db, nil
 }
 
@@ -156,7 +156,7 @@ func (env *TestEnvironment) RegisterCleanup(fn func() error) {
 func (env *TestEnvironment) Cleanup() error {
 	env.mutex.Lock()
 	defer env.mutex.Unlock()
-	
+
 	var errors []string
 	// Execute cleanup functions in reverse order (LIFO)
 	for i := len(env.cleanup) - 1; i >= 0; i-- {
@@ -164,7 +164,7 @@ func (env *TestEnvironment) Cleanup() error {
 			errors = append(errors, err.Error())
 		}
 	}
-	
+
 	if len(errors) > 0 {
 		return fmt.Errorf("cleanup errors: %v", errors)
 	}
@@ -186,7 +186,7 @@ func (tem *TestEnvManager) CleanupEnvironment(envID string) error {
 	if !ok {
 		return fmt.Errorf("environment %s not found", envID)
 	}
-	
+
 	env := value.(*TestEnvironment)
 	err := env.Cleanup()
 	tem.environments.Delete(envID)
@@ -196,19 +196,19 @@ func (tem *TestEnvManager) CleanupEnvironment(envID string) error {
 // CleanupAll removes and cleans up all environments
 func (tem *TestEnvManager) CleanupAll() error {
 	var errors []string
-	
+
 	tem.environments.Range(func(key, value interface{}) bool {
 		envID := key.(string)
 		env := value.(*TestEnvironment)
-		
+
 		if err := env.Cleanup(); err != nil {
 			errors = append(errors, fmt.Sprintf("env %s: %v", envID, err))
 		}
-		
+
 		tem.environments.Delete(envID)
 		return true
 	})
-	
+
 	if len(errors) > 0 {
 		return fmt.Errorf("cleanup errors: %v", errors)
 	}
@@ -222,7 +222,7 @@ func (tem *TestEnvManager) Close() error {
 		// Log error but continue with closing root DB
 		fmt.Printf("Warning: failed to cleanup all environments: %v\n", err)
 	}
-	
+
 	// Close root database connection
 	if tem.rootDB != nil {
 		return tem.rootDB.Close()
@@ -243,24 +243,24 @@ func getTestDBConfig() DBConfig {
 	if host == "" {
 		host = "localhost"
 	}
-	
+
 	port := os.Getenv("MYSQL_PORT")
 	if port == "" {
 		port = "3306"
 	}
-	
+
 	user := os.Getenv("MYSQL_USER")
 	if user == "" {
 		user = "root"
 	}
-	
+
 	password := os.Getenv("MYSQL_PASSWORD")
 	if password == "" {
 		password = "root"
 	}
-	
+
 	rootDSN := fmt.Sprintf("%s:%s@tcp(%s:%s)/", user, password, host, port)
-	
+
 	return DBConfig{
 		Host:     host,
 		Port:     port,

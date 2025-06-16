@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"sort" 
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1063,8 +1063,8 @@ func TestConvertValueToString(t *testing.T) {
 	t.Run("default case fallback", func(t *testing.T) {
 		// Test types that don't match any specific case and fall through to default
 		tests := []struct {
-			name          string
-			value         any
+			name           string
+			value          any
 			expectContains string
 		}{
 			{"pointer to string", func() *string { s := "test"; return &s }(), "0x"},
@@ -1263,7 +1263,7 @@ func TestValidateDiffSyncRequirements(t *testing.T) {
 		config.Sync.SyncMode = "diff"
 		config.Sync.PrimaryKey = "id"
 		syncCols := []string{"id", "name", "value"}
-		
+
 		err := validateDiffSyncRequirements(config, syncCols)
 		if err != nil {
 			t.Errorf("Expected no error for valid diff sync config, got: %v", err)
@@ -1275,7 +1275,7 @@ func TestValidateDiffSyncRequirements(t *testing.T) {
 		config.Sync.SyncMode = "diff"
 		config.Sync.PrimaryKey = ""
 		syncCols := []string{"name", "value"}
-		
+
 		err := validateDiffSyncRequirements(config, syncCols)
 		if err == nil {
 			t.Error("Expected error for diff sync without primary key")
@@ -1290,7 +1290,7 @@ func TestValidateDiffSyncRequirements(t *testing.T) {
 		config.Sync.SyncMode = "diff"
 		config.Sync.PrimaryKey = "id"
 		syncCols := []string{"name", "value"} // id not included
-		
+
 		err := validateDiffSyncRequirements(config, syncCols)
 		if err == nil {
 			t.Error("Expected error when primary key not in sync columns")
@@ -1305,7 +1305,7 @@ func TestValidatePrimaryKeyInColumns(t *testing.T) {
 	t.Run("primary key in columns", func(t *testing.T) {
 		columns := []string{"id", "name", "value"}
 		primaryKey := "id"
-		
+
 		err := validatePrimaryKeyInColumns(columns, primaryKey)
 		if err != nil {
 			t.Errorf("Expected no error when primary key is in columns, got: %v", err)
@@ -1315,7 +1315,7 @@ func TestValidatePrimaryKeyInColumns(t *testing.T) {
 	t.Run("primary key not in columns", func(t *testing.T) {
 		columns := []string{"name", "value"}
 		primaryKey := "id"
-		
+
 		err := validatePrimaryKeyInColumns(columns, primaryKey)
 		if err == nil {
 			t.Error("Expected error when primary key is not in columns")
@@ -1328,7 +1328,7 @@ func TestValidatePrimaryKeyInColumns(t *testing.T) {
 	t.Run("empty primary key", func(t *testing.T) {
 		columns := []string{"name", "value"}
 		primaryKey := ""
-		
+
 		err := validatePrimaryKeyInColumns(columns, primaryKey)
 		if err != nil {
 			t.Errorf("Expected no error for empty primary key, got: %v", err)
@@ -1431,34 +1431,34 @@ func TestFindCommonColumns(t *testing.T) {
 
 func TestFilterColumnsByConfig(t *testing.T) {
 	tests := []struct {
-		name           string
-		commonColumns  []string
-		configColumns  []string
-		expected       []string
+		name          string
+		commonColumns []string
+		configColumns []string
+		expected      []string
 	}{
 		{
-			name:           "empty config columns - return all common",
-			commonColumns:  []string{"id", "name", "value"},
-			configColumns:  []string{},
-			expected:       []string{"id", "name", "value"},
+			name:          "empty config columns - return all common",
+			commonColumns: []string{"id", "name", "value"},
+			configColumns: []string{},
+			expected:      []string{"id", "name", "value"},
 		},
 		{
-			name:           "config filters to subset",
-			commonColumns:  []string{"id", "name", "value"},
-			configColumns:  []string{"id", "name"},
-			expected:       []string{"id", "name"},
+			name:          "config filters to subset",
+			commonColumns: []string{"id", "name", "value"},
+			configColumns: []string{"id", "name"},
+			expected:      []string{"id", "name"},
 		},
 		{
-			name:           "config includes non-existent columns",
-			commonColumns:  []string{"id", "name"},
-			configColumns:  []string{"id", "name", "non_existent"},
-			expected:       []string{"id", "name"},
+			name:          "config includes non-existent columns",
+			commonColumns: []string{"id", "name"},
+			configColumns: []string{"id", "name", "non_existent"},
+			expected:      []string{"id", "name"},
 		},
 		{
-			name:           "no overlap between config and common",
-			commonColumns:  []string{"id", "name"},
-			configColumns:  []string{"value", "other"},
-			expected:       nil,
+			name:          "no overlap between config and common",
+			commonColumns: []string{"id", "name"},
+			configColumns: []string{"value", "other"},
+			expected:      nil,
 		},
 	}
 
@@ -1484,7 +1484,7 @@ func TestExtractPrimaryKeyValue(t *testing.T) {
 			"name":  "test",
 			"value": "test_value",
 		}
-		
+
 		pk, exists := extractPrimaryKeyValue(record, "id")
 		if !exists {
 			t.Error("Expected key to exist")
@@ -1499,7 +1499,7 @@ func TestExtractPrimaryKeyValue(t *testing.T) {
 			"name":  "test",
 			"value": "test_value",
 		}
-		
+
 		_, exists := extractPrimaryKeyValue(record, "id")
 		if exists {
 			t.Error("Expected key to not exist")
@@ -1511,7 +1511,7 @@ func TestExtractPrimaryKeyValue(t *testing.T) {
 			"id":   nil,
 			"name": "test",
 		}
-		
+
 		_, exists := extractPrimaryKeyValue(record, "id")
 		if exists {
 			t.Error("Expected nil value to be treated as non-existent")
@@ -1526,7 +1526,7 @@ func TestCompareRecords(t *testing.T) {
 	t.Run("identical records", func(t *testing.T) {
 		record1 := DataRecord{"id": "1", "name": "test", "value": "value1"}
 		record2 := DataRecord{"id": "1", "name": "test", "value": "value1"}
-		
+
 		result := compareRecords(record1, record2, syncColumns, primaryKey)
 		if result {
 			t.Error("Expected false for identical records (no difference)")
@@ -1536,7 +1536,7 @@ func TestCompareRecords(t *testing.T) {
 	t.Run("different records", func(t *testing.T) {
 		record1 := DataRecord{"id": "1", "name": "test", "value": "value1"}
 		record2 := DataRecord{"id": "1", "name": "test", "value": "value2"}
-		
+
 		result := compareRecords(record1, record2, syncColumns, primaryKey)
 		if !result {
 			t.Error("Expected true for different records")
@@ -1546,7 +1546,7 @@ func TestCompareRecords(t *testing.T) {
 	t.Run("records with extra columns ignored", func(t *testing.T) {
 		record1 := DataRecord{"id": "1", "name": "test", "value": "value1", "extra": "ignore1"}
 		record2 := DataRecord{"id": "1", "name": "test", "value": "value1", "extra": "ignore2"}
-		
+
 		result := compareRecords(record1, record2, syncColumns, primaryKey)
 		if result {
 			t.Error("Expected false when only non-sync columns differ")
@@ -1556,7 +1556,7 @@ func TestCompareRecords(t *testing.T) {
 	t.Run("primary key ignored in comparison", func(t *testing.T) {
 		record1 := DataRecord{"id": "1", "name": "test", "value": "value1"}
 		record2 := DataRecord{"id": "2", "name": "test", "value": "value1"}
-		
+
 		result := compareRecords(record1, record2, syncColumns, primaryKey)
 		if result {
 			t.Error("Expected false when only primary key differs (should be ignored)")

@@ -50,7 +50,7 @@ func NewResourceCleanupManager(timeout time.Duration) *ResourceCleanupManager {
 	if timeout == 0 {
 		timeout = 30 * time.Second // Default timeout
 	}
-	
+
 	return &ResourceCleanupManager{
 		resources: make([]CleanupResource, 0),
 		timeout:   timeout,
@@ -61,15 +61,15 @@ func NewResourceCleanupManager(timeout time.Duration) *ResourceCleanupManager {
 func (rcm *ResourceCleanupManager) RegisterResource(resource CleanupResource) {
 	rcm.mutex.Lock()
 	defer rcm.mutex.Unlock()
-	
+
 	if resource.Timeout == 0 {
 		resource.Timeout = rcm.timeout
 	}
-	
+
 	if resource.CreatedAt.IsZero() {
 		resource.CreatedAt = time.Now()
 	}
-	
+
 	rcm.resources = append(rcm.resources, resource)
 }
 
@@ -77,21 +77,21 @@ func (rcm *ResourceCleanupManager) RegisterResource(resource CleanupResource) {
 func (rcm *ResourceCleanupManager) CleanupAll() error {
 	rcm.mutex.Lock()
 	defer rcm.mutex.Unlock()
-	
+
 	if len(rcm.resources) == 0 {
 		return nil
 	}
-	
+
 	// Sort resources by priority (high priority first)
 	sortedResources := rcm.sortResourcesByPriority()
-	
+
 	var errors []string
 	var wg sync.WaitGroup
 	errorChan := make(chan error, len(sortedResources))
-	
+
 	// Execute cleanup for each priority level sequentially
 	priorities := []CleanupPriority{HighPriority, MediumPriority, LowPriority}
-	
+
 	for _, priority := range priorities {
 		// Clean up all resources of this priority level in parallel
 		for _, resource := range sortedResources {
@@ -99,46 +99,46 @@ func (rcm *ResourceCleanupManager) CleanupAll() error {
 				wg.Add(1)
 				go func(res CleanupResource) {
 					defer wg.Done()
-					
+
 					ctx, cancel := context.WithTimeout(context.Background(), res.Timeout)
 					defer cancel()
-					
+
 					done := make(chan error, 1)
 					go func() {
 						done <- res.CleanupFunc()
 					}()
-					
+
 					select {
 					case err := <-done:
 						if err != nil {
-							errorChan <- fmt.Errorf("cleanup failed for resource %s (%v): %w", 
+							errorChan <- fmt.Errorf("cleanup failed for resource %s (%v): %w",
 								res.ID, res.Type, err)
 						}
 					case <-ctx.Done():
-						errorChan <- fmt.Errorf("cleanup timeout for resource %s (%v) after %v", 
+						errorChan <- fmt.Errorf("cleanup timeout for resource %s (%v) after %v",
 							res.ID, res.Type, res.Timeout)
 					}
 				}(resource)
 			}
 		}
-		
+
 		// Wait for this priority level to complete before moving to next
 		wg.Wait()
 	}
-	
+
 	// Collect all errors
 	close(errorChan)
 	for err := range errorChan {
 		errors = append(errors, err.Error())
 	}
-	
+
 	// Clear resources after cleanup
 	rcm.resources = rcm.resources[:0]
-	
+
 	if len(errors) > 0 {
 		return fmt.Errorf("cleanup errors: %v", errors)
 	}
-	
+
 	return nil
 }
 
@@ -146,41 +146,41 @@ func (rcm *ResourceCleanupManager) CleanupAll() error {
 func (rcm *ResourceCleanupManager) CleanupByType(resourceType ResourceType) error {
 	rcm.mutex.Lock()
 	defer rcm.mutex.Unlock()
-	
+
 	var errors []string
 	var remaining []CleanupResource
-	
+
 	for _, resource := range rcm.resources {
 		if resource.Type == resourceType {
 			ctx, cancel := context.WithTimeout(context.Background(), resource.Timeout)
-			
+
 			done := make(chan error, 1)
 			go func() {
 				done <- resource.CleanupFunc()
 			}()
-			
+
 			select {
 			case err := <-done:
 				if err != nil {
 					errors = append(errors, fmt.Sprintf("resource %s: %v", resource.ID, err))
 				}
 			case <-ctx.Done():
-				errors = append(errors, fmt.Sprintf("resource %s: timeout after %v", 
+				errors = append(errors, fmt.Sprintf("resource %s: timeout after %v",
 					resource.ID, resource.Timeout))
 			}
-			
+
 			cancel()
 		} else {
 			remaining = append(remaining, resource)
 		}
 	}
-	
+
 	rcm.resources = remaining
-	
+
 	if len(errors) > 0 {
 		return fmt.Errorf("cleanup errors for type %v: %v", resourceType, errors)
 	}
-	
+
 	return nil
 }
 
@@ -188,14 +188,14 @@ func (rcm *ResourceCleanupManager) CleanupByType(resourceType ResourceType) erro
 func (rcm *ResourceCleanupManager) RemoveResource(resourceID string) bool {
 	rcm.mutex.Lock()
 	defer rcm.mutex.Unlock()
-	
+
 	for i, resource := range rcm.resources {
 		if resource.ID == resourceID {
 			rcm.resources = append(rcm.resources[:i], rcm.resources[i+1:]...)
 			return true
 		}
 	}
-	
+
 	return false
 }
 
@@ -210,14 +210,14 @@ func (rcm *ResourceCleanupManager) GetResourceCount() int {
 func (rcm *ResourceCleanupManager) GetResourcesByType(resourceType ResourceType) []CleanupResource {
 	rcm.mutex.RLock()
 	defer rcm.mutex.RUnlock()
-	
+
 	var result []CleanupResource
 	for _, resource := range rcm.resources {
 		if resource.Type == resourceType {
 			result = append(result, resource)
 		}
 	}
-	
+
 	return result
 }
 
@@ -225,7 +225,7 @@ func (rcm *ResourceCleanupManager) GetResourcesByType(resourceType ResourceType)
 func (rcm *ResourceCleanupManager) sortResourcesByPriority() []CleanupResource {
 	sorted := make([]CleanupResource, len(rcm.resources))
 	copy(sorted, rcm.resources)
-	
+
 	// Simple bubble sort by priority (high priority first)
 	for i := 0; i < len(sorted)-1; i++ {
 		for j := 0; j < len(sorted)-i-1; j++ {
@@ -234,7 +234,7 @@ func (rcm *ResourceCleanupManager) sortResourcesByPriority() []CleanupResource {
 			}
 		}
 	}
-	
+
 	return sorted
 }
 
@@ -310,13 +310,13 @@ func CleanupAllGlobal() error {
 // WithResourceCleanup wraps a test function with automatic resource cleanup
 func WithResourceCleanup(testFunc func(*ResourceCleanupManager)) error {
 	manager := NewResourceCleanupManager(30 * time.Second)
-	
+
 	defer func() {
 		if err := manager.CleanupAll(); err != nil {
 			fmt.Printf("Warning: cleanup failed: %v\n", err)
 		}
 	}()
-	
+
 	testFunc(manager)
 	return nil
 }
@@ -329,7 +329,7 @@ func SafeCleanup(cleanupFunc func() error) func() error {
 				fmt.Printf("Warning: cleanup panic recovered: %v\n", r)
 			}
 		}()
-		
+
 		return cleanupFunc()
 	}
 }
@@ -337,13 +337,13 @@ func SafeCleanup(cleanupFunc func() error) func() error {
 // CreateResourceCleanupForTest creates a cleanup manager specifically for a test
 func CreateResourceCleanupForTest(testName string) *ResourceCleanupManager {
 	manager := NewResourceCleanupManager(45 * time.Second) // Longer timeout for tests
-	
+
 	// Register common cleanup patterns for tests
 	if tempDir := os.Getenv("TEST_TEMP_DIR"); tempDir != "" {
 		testTempDir := fmt.Sprintf("%s/test_%s_%d", tempDir, testName, time.Now().UnixNano())
 		manager.RegisterResource(CleanupTempDir(testTempDir))
 	}
-	
+
 	return manager
 }
 
@@ -360,7 +360,7 @@ type CleanupReport struct {
 func (rcm *ResourceCleanupManager) GenerateCleanupReport() CleanupReport {
 	rcm.mutex.RLock()
 	defer rcm.mutex.RUnlock()
-	
+
 	return CleanupReport{
 		TotalResources: len(rcm.resources),
 	}
