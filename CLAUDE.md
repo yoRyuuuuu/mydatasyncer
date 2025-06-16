@@ -9,6 +9,11 @@ mydatasyncer is a data synchronization utility that synchronizes data from CSV a
 - **Overwrite mode**: Completely replaces all existing data in the target table
 - **Differential mode**: Updates only changed records, adds new records, and optionally deletes records not in the source file
 
+Key features:
+- **Multi-table synchronization**: Supports synchronizing multiple tables with dependency-aware ordering
+- **Parent-child relationships**: Automatic sync order determination based on foreign key dependencies
+- **Circular dependency detection**: Validates table dependency graphs to prevent infinite loops
+
 ## Architecture
 
 The codebase follows a modular design:
@@ -27,6 +32,7 @@ Key architectural patterns:
 - Type-preserving JSON value conversion to maintain data integrity
 - Dry-run mode for safe change preview
 - Immutable column protection to preserve system metadata
+- Dependency graph construction with topological sorting for multi-table sync ordering
 
 ## Development Commands
 
@@ -76,17 +82,21 @@ docker compose down
 
 ### Configuration System
 - YAML-based configuration with fallback to sensible defaults
+- Supports both single-table sync (legacy `sync` config) and multi-table sync (`tables` array)
+- Dependency-aware table ordering with foreign key relationship support
+- Circular dependency detection with detailed error reporting
 - Supports timestamp columns (created_at, updated_at) with automatic management
 - Immutable columns prevent accidental modification of system fields
 - Primary key requirement for differential sync mode
 
 ### Data Processing Pipeline
-1. Load and validate configuration
+1. Load and validate configuration (includes dependency graph validation for multi-table sync)
 2. Establish database connection with transaction support
-3. Load data from file using appropriate loader (CSV or JSON, auto-detected by file extension)
-4. Determine actual sync columns (intersection of file headers, DB schema, and config)
-5. Execute sync operations (overwrite or differential) within transaction
-6. Commit or rollback based on success/failure
+3. For multi-table sync: determine sync order using topological sort (insert: parent→child, delete: child→parent)
+4. Load data from file using appropriate loader (CSV or JSON, auto-detected by file extension)
+5. Determine actual sync columns (intersection of file headers, DB schema, and config)
+6. Execute sync operations (overwrite or differential) within transaction
+7. Commit or rollback based on success/failure
 
 ### Column Mapping Logic
 The system automatically determines which columns to sync based on:
@@ -100,10 +110,6 @@ The system automatically determines which columns to sync based on:
 - **JSON**: Must be an array of objects. Column names auto-detected from first object's keys if not specified in config. Values converted to strings with type preservation (integers, floats, booleans, null handled appropriately)
 
 This ensures robust handling of schema mismatches and provides clear error messages.
-
-## Branch Structure
-- `main`: Main development branch
-- `feature/*`: Feature development branches (current: `feature/json-loader`)
 
 ## Code Style
 - Think and write comments in English (following project conventions)
