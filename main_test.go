@@ -580,7 +580,7 @@ sync:
 			t.Error("Expected error for invalid DSN")
 		}
 		if !strings.Contains(err.Error(), "database connection error") &&
-		   !strings.Contains(err.Error(), "database connectivity error") {
+			!strings.Contains(err.Error(), "database connectivity error") {
 			t.Errorf("Expected database connection/connectivity error, got: %v", err)
 		}
 	})
@@ -661,7 +661,7 @@ sync:
 	t.Run("invalid file format error", func(t *testing.T) {
 		tempDir := t.TempDir()
 		configFile := filepath.Join(tempDir, "invalid_format.yml")
-		dataFile := filepath.Join(tempDir, "invalid.txt")  // Unsupported file extension
+		dataFile := filepath.Join(tempDir, "invalid.txt") // Unsupported file extension
 
 		validConfig := `
 db:
