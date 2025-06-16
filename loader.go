@@ -238,24 +238,24 @@ func (ml *MultiTableLoader) LoadAll() (MultiTableData, error) {
 	}
 
 	result := make(MultiTableData)
-	
+
 	for _, tableConfig := range ml.TableConfigs {
 		// Create appropriate loader for each file
 		loader, err := GetLoader(tableConfig.FilePath)
 		if err != nil {
 			return nil, fmt.Errorf("error creating loader for table '%s' file '%s': %w", tableConfig.Name, tableConfig.FilePath, err)
 		}
-		
+
 		// Load data from the file
 		records, err := loader.Load(tableConfig.Columns)
 		if err != nil {
 			return nil, fmt.Errorf("error loading data for table '%s' from file '%s': %w", tableConfig.Name, tableConfig.FilePath, err)
 		}
-		
+
 		// Store the loaded records mapped by table name
 		result[tableConfig.Name] = records
 	}
-	
+
 	return result, nil
 }
 
@@ -267,16 +267,16 @@ func (ml *MultiTableLoader) LoadForTable(tableName string) ([]DataRecord, error)
 			if err != nil {
 				return nil, fmt.Errorf("error creating loader for table '%s' file '%s': %w", tableConfig.Name, tableConfig.FilePath, err)
 			}
-			
+
 			records, err := loader.Load(tableConfig.Columns)
 			if err != nil {
 				return nil, fmt.Errorf("error loading data for table '%s' from file '%s': %w", tableConfig.Name, tableConfig.FilePath, err)
 			}
-			
+
 			return records, nil
 		}
 	}
-	
+
 	return nil, fmt.Errorf("table configuration not found for '%s'", tableName)
 }
 

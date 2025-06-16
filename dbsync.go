@@ -19,14 +19,15 @@ import (
 // and SQL operations.
 //
 // Example usage:
-//   pk1 := NewPrimaryKey(123)
-//   pk2 := NewPrimaryKey("123")
-//   if pk1.Equal(pk2) {
-//       // Handle equal primary keys
-//   }
+//
+//	pk1 := NewPrimaryKey(123)
+//	pk2 := NewPrimaryKey("123")
+//	if pk1.Equal(pk2) {
+//	    // Handle equal primary keys
+//	}
 type PrimaryKey struct {
-	Value any // Original typed value from the data source
-	Str   string      // String representation for display and SQL operations
+	Value any    // Original typed value from the data source
+	Str   string // String representation for display and SQL operations
 }
 
 // NewPrimaryKey creates a new PrimaryKey with type preservation and validation
@@ -1074,7 +1075,7 @@ func executeSingleTableSync(ctx context.Context, tx *sql.Tx, config Config, tabl
 	if tableName == "" {
 		return fmt.Errorf("table name is empty")
 	}
-	
+
 	tableConfig, err := GetTableConfig(config.Tables, tableName)
 	if err != nil {
 		return fmt.Errorf("table config not found for '%s': %w", tableName, err)

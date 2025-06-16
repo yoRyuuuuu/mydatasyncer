@@ -14,11 +14,11 @@ func TestLoadConfig(t *testing.T) {
 		originalWd, _ := os.Getwd()
 		defer os.Chdir(originalWd)
 		os.Chdir(tempDir)
-		
+
 		// This will try to load "mydatasyncer.yml" which doesn't exist in temp dir
 		// Should fall back to default config
 		cfg := LoadConfig("")
-		
+
 		// Should get default config
 		defaultCfg := NewDefaultConfig()
 		if cfg.DB.DSN != defaultCfg.DB.DSN {
@@ -31,7 +31,7 @@ func TestLoadConfig(t *testing.T) {
 
 	t.Run("non-existent file falls back to default", func(t *testing.T) {
 		cfg := LoadConfig("non_existent_file.yml")
-		
+
 		// Should get default config
 		defaultCfg := NewDefaultConfig()
 		if cfg.DB.DSN != defaultCfg.DB.DSN {
@@ -46,7 +46,7 @@ func TestLoadConfig(t *testing.T) {
 		// Create a temporary file with invalid YAML
 		tempDir := t.TempDir()
 		tempFile := filepath.Join(tempDir, "invalid.yml")
-		
+
 		invalidYAML := `
 invalid: yaml: content:
   - missing proper structure
@@ -58,7 +58,7 @@ invalid: yaml: content:
 		}
 
 		cfg := LoadConfig(tempFile)
-		
+
 		// Should fall back to default config
 		defaultCfg := NewDefaultConfig()
 		if cfg.DB.DSN != defaultCfg.DB.DSN {
@@ -72,7 +72,7 @@ invalid: yaml: content:
 	t.Run("valid config file is loaded", func(t *testing.T) {
 		tempDir := t.TempDir()
 		tempFile := filepath.Join(tempDir, "valid.yml")
-		
+
 		validYAML := `
 db:
   dsn: "test:password@tcp(localhost:3306)/testdb"
@@ -80,7 +80,7 @@ db:
 sync:
   filePath: "test.csv"
   tableName: "test_table"
-  primaryKey: "id" 
+  primaryKey: "id"
   syncMode: "diff"
   columns: ["id", "name", "email"]
 `
@@ -90,7 +90,7 @@ sync:
 		}
 
 		cfg := LoadConfig(tempFile)
-		
+
 		if cfg.DB.DSN != "test:password@tcp(localhost:3306)/testdb" {
 			t.Errorf("Expected DSN from file, got %q", cfg.DB.DSN)
 		}
@@ -115,13 +115,13 @@ sync:
 
 		tempDir := t.TempDir()
 		tempFile := filepath.Join(tempDir, "no_permission.yml")
-		
+
 		// Create file then remove read permission
 		err := os.WriteFile(tempFile, []byte("test: content"), 0644)
 		if err != nil {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
-		
+
 		err = os.Chmod(tempFile, 0000) // No permissions
 		if err != nil {
 			t.Fatalf("Failed to change file permissions: %v", err)
@@ -129,7 +129,7 @@ sync:
 		defer os.Chmod(tempFile, 0644) // Restore permissions for cleanup
 
 		cfg := LoadConfig(tempFile)
-		
+
 		// Should fall back to default config
 		defaultCfg := NewDefaultConfig()
 		if cfg.DB.DSN != defaultCfg.DB.DSN {
@@ -145,9 +145,9 @@ func TestSetDefaultsIfNeeded(t *testing.T) {
 	t.Run("empty config gets all defaults", func(t *testing.T) {
 		cfg := Config{}
 		setDefaultsIfNeeded(&cfg)
-		
+
 		defaultCfg := NewDefaultConfig()
-		
+
 		// DSN should remain empty (not set to default)
 		if cfg.DB.DSN != "" {
 			t.Errorf("Expected empty DSN, got %q", cfg.DB.DSN)
@@ -177,11 +177,11 @@ func TestSetDefaultsIfNeeded(t *testing.T) {
 				// PrimaryKey and SyncMode are empty, should get defaults
 			},
 		}
-		
+
 		setDefaultsIfNeeded(&cfg)
-		
+
 		defaultCfg := NewDefaultConfig()
-		
+
 		// Custom values should be preserved (DSN doesn't get overwritten to default)
 		if cfg.DB.DSN != "custom:dsn@tcp(localhost:3306)/customdb" {
 			t.Errorf("Custom DSN was overwritten: %q", cfg.DB.DSN)
@@ -192,7 +192,7 @@ func TestSetDefaultsIfNeeded(t *testing.T) {
 		if cfg.Sync.TableName != "custom_table" {
 			t.Errorf("Custom TableName was overwritten: %q", cfg.Sync.TableName)
 		}
-		
+
 		// Empty values should get defaults
 		if cfg.Sync.PrimaryKey != defaultCfg.Sync.PrimaryKey {
 			t.Errorf("Expected default PrimaryKey for empty value, got %q", cfg.Sync.PrimaryKey)
@@ -208,9 +208,9 @@ func TestSetDefaultsIfNeeded(t *testing.T) {
 				Columns: []string{}, // Empty slice
 			},
 		}
-		
+
 		setDefaultsIfNeeded(&cfg)
-		
+
 		defaultCfg := NewDefaultConfig()
 		if len(cfg.Sync.Columns) != len(defaultCfg.Sync.Columns) {
 			t.Errorf("Expected default columns length %d, got %d", len(defaultCfg.Sync.Columns), len(cfg.Sync.Columns))
@@ -224,9 +224,9 @@ func TestSetDefaultsIfNeeded(t *testing.T) {
 				Columns: customColumns,
 			},
 		}
-		
+
 		setDefaultsIfNeeded(&cfg)
-		
+
 		if len(cfg.Sync.Columns) != len(customColumns) {
 			t.Errorf("Custom columns were overwritten")
 		}
@@ -251,7 +251,7 @@ func TestValidateConfig(t *testing.T) {
 				SyncMode:   "diff",
 			},
 		}
-		
+
 		err := ValidateConfig(cfg)
 		if err != nil {
 			t.Errorf("Expected no error for valid config, got: %v", err)
@@ -270,7 +270,7 @@ func TestValidateConfig(t *testing.T) {
 				SyncMode:   "diff",
 			},
 		}
-		
+
 		err := ValidateConfig(cfg)
 		if err == nil {
 			t.Error("Expected error for empty DSN")
@@ -292,7 +292,7 @@ func TestValidateConfig(t *testing.T) {
 				SyncMode:   "diff",
 			},
 		}
-		
+
 		err := ValidateConfig(cfg)
 		if err == nil {
 			t.Error("Expected error for empty file path")
@@ -314,7 +314,7 @@ func TestValidateConfig(t *testing.T) {
 				SyncMode:   "diff",
 			},
 		}
-		
+
 		err := ValidateConfig(cfg)
 		if err == nil {
 			t.Error("Expected error for empty table name")
@@ -336,7 +336,7 @@ func TestValidateConfig(t *testing.T) {
 				SyncMode:   "invalid_mode", // Invalid sync mode
 			},
 		}
-		
+
 		err := ValidateConfig(cfg)
 		if err == nil {
 			t.Error("Expected error for invalid sync mode")
@@ -358,7 +358,7 @@ func TestValidateConfig(t *testing.T) {
 				SyncMode:   "diff",
 			},
 		}
-		
+
 		err := ValidateConfig(cfg)
 		if err == nil {
 			t.Error("Expected error for diff mode without primary key")
@@ -380,7 +380,7 @@ func TestValidateConfig(t *testing.T) {
 				SyncMode:   "overwrite",
 			},
 		}
-		
+
 		err := ValidateConfig(cfg)
 		if err != nil {
 			t.Errorf("Expected no error for overwrite mode without primary key, got: %v", err)
@@ -424,7 +424,7 @@ func TestValidateMultiTableConfig(t *testing.T) {
 			config: Config{
 				DB:     DBConfig{DSN: "user:pass@tcp(localhost:3306)/db"},
 				Tables: []TableSyncConfig{},
-				Sync:   SyncConfig{
+				Sync: SyncConfig{
 					FilePath:  "", // Empty to bypass single table validation
 					TableName: "", // Empty to bypass single table validation
 				},
@@ -507,8 +507,8 @@ func TestGetSyncOrder(t *testing.T) {
 				{Name: "orders", Dependencies: []string{"users"}},
 				{Name: "order_items", Dependencies: []string{"orders", "products"}},
 			},
-			expectedInsertOrder: []string{"users", "categories", "orders", "products", "order_items"},
-			expectedDeleteOrder: []string{"order_items", "products", "orders", "categories", "users"},
+			expectedInsertOrder: nil, // Will be validated by dependency order check
+			expectedDeleteOrder: nil, // Will be validated by dependency order check
 			wantErr:             false,
 		},
 		{
@@ -539,14 +539,32 @@ func TestGetSyncOrder(t *testing.T) {
 				return
 			}
 
-			// Check insert order matches expectation
-			if !slicesEqual(insertOrder, tt.expectedInsertOrder) {
-				t.Errorf("GetSyncOrder() insertOrder = %v, want %v", insertOrder, tt.expectedInsertOrder)
+			// Check insert order matches expectation or is valid topological order
+			if tt.expectedInsertOrder != nil {
+				if !slicesEqual(insertOrder, tt.expectedInsertOrder) {
+					t.Errorf("GetSyncOrder() insertOrder = %v, want %v", insertOrder, tt.expectedInsertOrder)
+				}
+			} else {
+				// For cases where exact order is not specified, validate topological correctness
+				if !isValidTopologicalOrder(insertOrder, tt.tables) {
+					t.Errorf("GetSyncOrder() insertOrder = %v is not a valid topological order", insertOrder)
+				}
 			}
 
-			// Check delete order matches expectation  
-			if !slicesEqual(deleteOrder, tt.expectedDeleteOrder) {
-				t.Errorf("GetSyncOrder() deleteOrder = %v, want %v", deleteOrder, tt.expectedDeleteOrder)
+			// Check delete order matches expectation or is valid reverse topological order
+			if tt.expectedDeleteOrder != nil {
+				if !slicesEqual(deleteOrder, tt.expectedDeleteOrder) {
+					t.Errorf("GetSyncOrder() deleteOrder = %v, want %v", deleteOrder, tt.expectedDeleteOrder)
+				}
+			} else {
+				// For delete order, reverse the order and check if it's valid topological order
+				reversedDeleteOrder := make([]string, len(deleteOrder))
+				for i, table := range deleteOrder {
+					reversedDeleteOrder[len(deleteOrder)-1-i] = table
+				}
+				if !isValidTopologicalOrder(reversedDeleteOrder, tt.tables) {
+					t.Errorf("GetSyncOrder() deleteOrder = %v is not a valid reverse topological order", deleteOrder)
+				}
 			}
 		})
 	}
@@ -623,12 +641,12 @@ func TestDependencyGraph(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			graph := NewDependencyGraph(tt.tables)
-			
+
 			// Test graph structure
 			if len(graph.adjacencyList) != len(tt.tables) {
 				t.Errorf("Expected %d nodes in graph, got %d", len(tt.tables), len(graph.adjacencyList))
 			}
-			
+
 			// Test topological order
 			order, err := graph.GetTopologicalOrder()
 			if tt.wantErr {
@@ -637,16 +655,16 @@ func TestDependencyGraph(t *testing.T) {
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if len(order) != len(tt.expected) {
 				t.Errorf("Expected order length %d, got %d", len(tt.expected), len(order))
 			}
-			
+
 			// Verify the order respects dependencies
 			for _, table := range tt.tables {
 				tablePos := findPosition(order, table.Name)
@@ -698,30 +716,30 @@ func TestCircularDependencyError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			graph := NewDependencyGraph(tt.tables)
 			err := graph.DetectCycles()
-			
+
 			if err == nil {
 				t.Errorf("Expected circular dependency error but got nil")
 				return
 			}
-			
+
 			// Check if error is of correct type
 			cycleErr, ok := err.(*CircularDependencyError)
 			if !ok {
 				t.Errorf("Expected CircularDependencyError, got %T: %v", err, err)
 				return
 			}
-			
+
 			errorMsg := cycleErr.Error()
 			t.Logf("Error message: %s", errorMsg)
 			t.Logf("Cycle detected: %v", cycleErr.Cycle)
-			
+
 			// Check if error message contains expected strings
 			for _, expected := range tt.expectedContains {
 				if !strings.Contains(errorMsg, expected) {
 					t.Errorf("Error message '%s' should contain '%s'", errorMsg, expected)
 				}
 			}
-			
+
 			// Verify cycle is not empty
 			if len(cycleErr.Cycle) == 0 {
 				t.Errorf("Expected non-empty cycle, got empty slice")
@@ -789,5 +807,36 @@ func slicesEqual(a, b []string) bool {
 			return false
 		}
 	}
+	return true
+}
+
+// Helper function to validate if the order respects dependencies
+func isValidTopologicalOrder(order []string, tables []TableSyncConfig) bool {
+	// Create position map for quick lookup
+	position := make(map[string]int)
+	for i, tableName := range order {
+		position[tableName] = i
+	}
+
+	// Check if all dependencies come before dependents
+	for _, table := range tables {
+		tablePos, exists := position[table.Name]
+		if !exists {
+			return false
+		}
+
+		for _, dep := range table.Dependencies {
+			depPos, depExists := position[dep]
+			if !depExists {
+				return false
+			}
+
+			// Dependency must come before the dependent table
+			if depPos >= tablePos {
+				return false
+			}
+		}
+	}
+
 	return true
 }

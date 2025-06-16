@@ -198,14 +198,14 @@ func TestJSONLoader_Load_Success(t *testing.T) {
 			columns: []string{"int_val", "float_val", "bool_true", "bool_false", "null_val", "string_val", "zero_int", "zero_float"},
 			expected: []DataRecord{
 				{
-					"int_val":     float64(42),
-					"float_val":   3.14159,
-					"bool_true":   true,        // boolean true
-					"bool_false":  false,       // boolean false
-					"null_val":    nil,
-					"string_val":  "text",
-					"zero_int":    float64(0),
-					"zero_float":  0.0,
+					"int_val":    float64(42),
+					"float_val":  3.14159,
+					"bool_true":  true,  // boolean true
+					"bool_false": false, // boolean false
+					"null_val":   nil,
+					"string_val": "text",
+					"zero_int":   float64(0),
+					"zero_float": 0.0,
 				},
 			},
 		},
@@ -467,10 +467,10 @@ func TestCSVLoader_AdditionalErrorCases(t *testing.T) {
 		// Create a CSV with empty header (just commas, no actual column names)
 		csvContent := ",,\n1,test,value"
 		filePath := createTempCSV(t, "empty_header.csv", csvContent)
-		
+
 		loader := NewCSVLoader(filePath)
 		records, err := loader.Load(nil)
-		
+
 		// This actually succeeds because empty strings are valid column names
 		// The empty header check in loader.go (line 93-95) checks for len(headerNames) == 0
 		// but ",,\n" produces ["", "", ""] which has length 3, not 0
@@ -495,10 +495,10 @@ func TestCSVLoader_AdditionalErrorCases(t *testing.T) {
 		// This tests the error handling for csv.ReadAll on line 97-100 in loader.go
 		csvContent := "id,name,value\n1,\"unclosed quote,value\n2,productB,200"
 		filePath := createTempCSV(t, "malformed.csv", csvContent)
-		
+
 		loader := NewCSVLoader(filePath)
 		_, err := loader.Load(nil)
-		
+
 		if err == nil {
 			t.Fatalf("Expected error for malformed CSV, got nil")
 		}
@@ -509,17 +509,17 @@ func TestCSVLoader_AdditionalErrorCases(t *testing.T) {
 	})
 
 	t.Run("truly empty header to trigger len check", func(t *testing.T) {
-		// To trigger the len(headerNames) == 0 check on line 93-95, 
+		// To trigger the len(headerNames) == 0 check on line 93-95,
 		// we need csv.Reader.Read() to return an empty slice []string{}
 		// This is difficult to achieve with normal CSV content.
 		// However, we can test a completely empty file which should fail earlier
 		// in the header reading stage with io.EOF
-		csvContent := ""  // Completely empty file
+		csvContent := "" // Completely empty file
 		filePath := createTempCSV(t, "truly_empty.csv", csvContent)
-		
+
 		loader := NewCSVLoader(filePath)
 		_, err := loader.Load(nil)
-		
+
 		if err == nil {
 			t.Fatalf("Expected error for truly empty file, got nil")
 		}
@@ -536,13 +536,13 @@ func TestCSVLoader_AdditionalErrorCases(t *testing.T) {
 
 		tempDir := t.TempDir()
 		filePath := filepath.Join(tempDir, "no_permission.csv")
-		
+
 		// Create file then remove read permission
 		err := os.WriteFile(filePath, []byte("id,name\n1,test"), 0644)
 		if err != nil {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
-		
+
 		err = os.Chmod(filePath, 0000) // No permissions
 		if err != nil {
 			t.Fatalf("Failed to change file permissions: %v", err)
@@ -551,7 +551,7 @@ func TestCSVLoader_AdditionalErrorCases(t *testing.T) {
 
 		loader := NewCSVLoader(filePath)
 		_, err = loader.Load(nil)
-		
+
 		if err == nil {
 			t.Fatalf("Expected permission error, got nil")
 		}
@@ -566,10 +566,10 @@ func TestCSVLoader_AdditionalErrorCases(t *testing.T) {
 1,"unclosed quote,test,value
 2,normal,value`
 		filePath := createTempCSV(t, "malformed.csv", csvContent)
-		
+
 		loader := NewCSVLoader(filePath)
 		_, err := loader.Load(nil)
-		
+
 		if err == nil {
 			t.Fatalf("Expected error for malformed CSV, got nil")
 		}
@@ -583,10 +583,10 @@ func TestCSVLoader_AdditionalErrorCases(t *testing.T) {
 		// Test the specific EOF handling on line 88-90
 		csvContent := `id,name,value` // No newline, just header
 		filePath := createTempCSV(t, "header_only_eof.csv", csvContent)
-		
+
 		loader := NewCSVLoader(filePath)
 		records, err := loader.Load(nil)
-		
+
 		// This should succeed and return empty records
 		if err != nil {
 			t.Errorf("Expected no error for header-only file, got: %v", err)
@@ -600,12 +600,12 @@ func TestCSVLoader_AdditionalErrorCases(t *testing.T) {
 // Multi-table loader tests
 func TestMultiTableLoader_LoadAll(t *testing.T) {
 	tests := []struct {
-		name        string
+		name         string
 		tableConfigs []TableSyncConfig
 		fileContents map[string]string // file name -> content
 		expected     MultiTableData
-		wantErr     bool
-		errContains string
+		wantErr      bool
+		errContains  string
 	}{
 		{
 			name: "Load multiple CSV files successfully",
@@ -614,7 +614,7 @@ func TestMultiTableLoader_LoadAll(t *testing.T) {
 				{Name: "orders", FilePath: "orders.csv"},
 			},
 			fileContents: map[string]string{
-				"users.csv": "id,name,email\n1,Alice,alice@example.com\n2,Bob,bob@example.com",
+				"users.csv":  "id,name,email\n1,Alice,alice@example.com\n2,Bob,bob@example.com",
 				"orders.csv": "id,user_id,amount\n1,1,100.50\n2,2,75.25",
 			},
 			expected: MultiTableData{
@@ -637,7 +637,7 @@ func TestMultiTableLoader_LoadAll(t *testing.T) {
 			},
 			fileContents: map[string]string{
 				"categories.json": `[{"id": 1, "name": "Electronics"}, {"id": 2, "name": "Books"}]`,
-				"products.json": `[{"id": 1, "name": "Laptop", "category_id": 1}, {"id": 2, "name": "Novel", "category_id": 2}]`,
+				"products.json":   `[{"id": 1, "name": "Laptop", "category_id": 1}, {"id": 2, "name": "Novel", "category_id": 2}]`,
 			},
 			expected: MultiTableData{
 				"categories": []DataRecord{
@@ -658,7 +658,7 @@ func TestMultiTableLoader_LoadAll(t *testing.T) {
 				{Name: "profiles", FilePath: "profiles.json", Columns: []string{"user_id", "bio"}},
 			},
 			fileContents: map[string]string{
-				"users.csv": "id,name,email\n1,Alice,alice@example.com\n2,Bob,bob@example.com",
+				"users.csv":     "id,name,email\n1,Alice,alice@example.com\n2,Bob,bob@example.com",
 				"profiles.json": `[{"user_id": 1, "bio": "Software Developer", "age": 30}, {"user_id": 2, "bio": "Designer", "age": 25}]`,
 			},
 			expected: MultiTableData{
@@ -696,7 +696,7 @@ func TestMultiTableLoader_LoadAll(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tempDir := t.TempDir()
-			
+
 			// Create temporary files
 			for filename, content := range tt.fileContents {
 				filePath := filepath.Join(tempDir, filename)
@@ -741,7 +741,7 @@ func TestMultiTableLoader_LoadAll(t *testing.T) {
 
 func TestMultiTableLoader_LoadForTable(t *testing.T) {
 	tempDir := t.TempDir()
-	
+
 	// Create test files
 	usersFile := filepath.Join(tempDir, "users.csv")
 	err := os.WriteFile(usersFile, []byte("id,name\n1,Alice\n2,Bob"), 0644)
