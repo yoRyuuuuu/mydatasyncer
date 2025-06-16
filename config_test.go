@@ -14,11 +14,11 @@ func TestLoadConfig(t *testing.T) {
 		originalWd, _ := os.Getwd()
 		defer os.Chdir(originalWd)
 		os.Chdir(tempDir)
-		
+
 		// This will try to load "mydatasyncer.yml" which doesn't exist in temp dir
 		// Should fall back to default config
 		cfg := LoadConfig("")
-		
+
 		// Should get default config
 		defaultCfg := NewDefaultConfig()
 		if cfg.DB.DSN != defaultCfg.DB.DSN {
@@ -31,7 +31,7 @@ func TestLoadConfig(t *testing.T) {
 
 	t.Run("non-existent file falls back to default", func(t *testing.T) {
 		cfg := LoadConfig("non_existent_file.yml")
-		
+
 		// Should get default config
 		defaultCfg := NewDefaultConfig()
 		if cfg.DB.DSN != defaultCfg.DB.DSN {
@@ -46,7 +46,7 @@ func TestLoadConfig(t *testing.T) {
 		// Create a temporary file with invalid YAML
 		tempDir := t.TempDir()
 		tempFile := filepath.Join(tempDir, "invalid.yml")
-		
+
 		invalidYAML := `
 invalid: yaml: content:
   - missing proper structure
@@ -58,7 +58,7 @@ invalid: yaml: content:
 		}
 
 		cfg := LoadConfig(tempFile)
-		
+
 		// Should fall back to default config
 		defaultCfg := NewDefaultConfig()
 		if cfg.DB.DSN != defaultCfg.DB.DSN {
@@ -72,7 +72,7 @@ invalid: yaml: content:
 	t.Run("valid config file is loaded", func(t *testing.T) {
 		tempDir := t.TempDir()
 		tempFile := filepath.Join(tempDir, "valid.yml")
-		
+
 		validYAML := `
 db:
   dsn: "test:password@tcp(localhost:3306)/testdb"
@@ -90,7 +90,7 @@ sync:
 		}
 
 		cfg := LoadConfig(tempFile)
-		
+
 		if cfg.DB.DSN != "test:password@tcp(localhost:3306)/testdb" {
 			t.Errorf("Expected DSN from file, got %q", cfg.DB.DSN)
 		}
@@ -115,13 +115,13 @@ sync:
 
 		tempDir := t.TempDir()
 		tempFile := filepath.Join(tempDir, "no_permission.yml")
-		
+
 		// Create file then remove read permission
 		err := os.WriteFile(tempFile, []byte("test: content"), 0644)
 		if err != nil {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
-		
+
 		err = os.Chmod(tempFile, 0000) // No permissions
 		if err != nil {
 			t.Fatalf("Failed to change file permissions: %v", err)
@@ -129,7 +129,7 @@ sync:
 		defer os.Chmod(tempFile, 0644) // Restore permissions for cleanup
 
 		cfg := LoadConfig(tempFile)
-		
+
 		// Should fall back to default config
 		defaultCfg := NewDefaultConfig()
 		if cfg.DB.DSN != defaultCfg.DB.DSN {
@@ -145,9 +145,9 @@ func TestSetDefaultsIfNeeded(t *testing.T) {
 	t.Run("empty config gets all defaults", func(t *testing.T) {
 		cfg := Config{}
 		setDefaultsIfNeeded(&cfg)
-		
+
 		defaultCfg := NewDefaultConfig()
-		
+
 		// DSN should remain empty (not set to default)
 		if cfg.DB.DSN != "" {
 			t.Errorf("Expected empty DSN, got %q", cfg.DB.DSN)
@@ -177,11 +177,11 @@ func TestSetDefaultsIfNeeded(t *testing.T) {
 				// PrimaryKey and SyncMode are empty, should get defaults
 			},
 		}
-		
+
 		setDefaultsIfNeeded(&cfg)
-		
+
 		defaultCfg := NewDefaultConfig()
-		
+
 		// Custom values should be preserved (DSN doesn't get overwritten to default)
 		if cfg.DB.DSN != "custom:dsn@tcp(localhost:3306)/customdb" {
 			t.Errorf("Custom DSN was overwritten: %q", cfg.DB.DSN)
@@ -192,7 +192,7 @@ func TestSetDefaultsIfNeeded(t *testing.T) {
 		if cfg.Sync.TableName != "custom_table" {
 			t.Errorf("Custom TableName was overwritten: %q", cfg.Sync.TableName)
 		}
-		
+
 		// Empty values should get defaults
 		if cfg.Sync.PrimaryKey != defaultCfg.Sync.PrimaryKey {
 			t.Errorf("Expected default PrimaryKey for empty value, got %q", cfg.Sync.PrimaryKey)
@@ -208,9 +208,9 @@ func TestSetDefaultsIfNeeded(t *testing.T) {
 				Columns: []string{}, // Empty slice
 			},
 		}
-		
+
 		setDefaultsIfNeeded(&cfg)
-		
+
 		defaultCfg := NewDefaultConfig()
 		if len(cfg.Sync.Columns) != len(defaultCfg.Sync.Columns) {
 			t.Errorf("Expected default columns length %d, got %d", len(defaultCfg.Sync.Columns), len(cfg.Sync.Columns))
@@ -224,9 +224,9 @@ func TestSetDefaultsIfNeeded(t *testing.T) {
 				Columns: customColumns,
 			},
 		}
-		
+
 		setDefaultsIfNeeded(&cfg)
-		
+
 		if len(cfg.Sync.Columns) != len(customColumns) {
 			t.Errorf("Custom columns were overwritten")
 		}
@@ -251,7 +251,7 @@ func TestValidateConfig(t *testing.T) {
 				SyncMode:   "diff",
 			},
 		}
-		
+
 		err := ValidateConfig(cfg)
 		if err != nil {
 			t.Errorf("Expected no error for valid config, got: %v", err)
@@ -270,7 +270,7 @@ func TestValidateConfig(t *testing.T) {
 				SyncMode:   "diff",
 			},
 		}
-		
+
 		err := ValidateConfig(cfg)
 		if err == nil {
 			t.Error("Expected error for empty DSN")
@@ -292,7 +292,7 @@ func TestValidateConfig(t *testing.T) {
 				SyncMode:   "diff",
 			},
 		}
-		
+
 		err := ValidateConfig(cfg)
 		if err == nil {
 			t.Error("Expected error for empty file path")
@@ -314,7 +314,7 @@ func TestValidateConfig(t *testing.T) {
 				SyncMode:   "diff",
 			},
 		}
-		
+
 		err := ValidateConfig(cfg)
 		if err == nil {
 			t.Error("Expected error for empty table name")
@@ -336,7 +336,7 @@ func TestValidateConfig(t *testing.T) {
 				SyncMode:   "invalid_mode", // Invalid sync mode
 			},
 		}
-		
+
 		err := ValidateConfig(cfg)
 		if err == nil {
 			t.Error("Expected error for invalid sync mode")
@@ -358,7 +358,7 @@ func TestValidateConfig(t *testing.T) {
 				SyncMode:   "diff",
 			},
 		}
-		
+
 		err := ValidateConfig(cfg)
 		if err == nil {
 			t.Error("Expected error for diff mode without primary key")
@@ -380,7 +380,7 @@ func TestValidateConfig(t *testing.T) {
 				SyncMode:   "overwrite",
 			},
 		}
-		
+
 		err := ValidateConfig(cfg)
 		if err != nil {
 			t.Errorf("Expected no error for overwrite mode without primary key, got: %v", err)

@@ -510,14 +510,14 @@ func TestRunAppErrorHandling(t *testing.T) {
 	t.Run("invalid config validation error", func(t *testing.T) {
 		tempDir := t.TempDir()
 		configFile := filepath.Join(tempDir, "invalid_config.yml")
-		
+
 		// Create a dummy CSV file
 		dummyCSV := filepath.Join(tempDir, "test.csv")
 		err := os.WriteFile(dummyCSV, []byte("id,name\n1,test"), 0644)
 		if err != nil {
 			t.Fatalf("Failed to create dummy CSV file: %v", err)
 		}
-		
+
 		// Create a config that will pass parsing but fail validation
 		invalidConfigYAML := `
 db:
@@ -549,14 +549,14 @@ sync:
 	t.Run("invalid database DSN error", func(t *testing.T) {
 		tempDir := t.TempDir()
 		configFile := filepath.Join(tempDir, "invalid_dsn.yml")
-		
+
 		// Create a dummy CSV file
 		dummyCSV := filepath.Join(tempDir, "test.csv")
 		err := os.WriteFile(dummyCSV, []byte("id,name\n1,test"), 0644)
 		if err != nil {
 			t.Fatalf("Failed to create dummy CSV file: %v", err)
 		}
-		
+
 		invalidDSNConfig := `
 db:
   dsn: "invalid:dsn:format"  # Invalid DSN format
@@ -579,8 +579,8 @@ sync:
 		if err == nil {
 			t.Error("Expected error for invalid DSN")
 		}
-		if !strings.Contains(err.Error(), "database connection error") && 
-		   !strings.Contains(err.Error(), "database connectivity error") {
+		if !strings.Contains(err.Error(), "database connection error") &&
+			!strings.Contains(err.Error(), "database connectivity error") {
 			t.Errorf("Expected database connection/connectivity error, got: %v", err)
 		}
 	})
@@ -588,7 +588,7 @@ sync:
 	t.Run("non-existent file error", func(t *testing.T) {
 		tempDir := t.TempDir()
 		configFile := filepath.Join(tempDir, "nonexistent_file.yml")
-		
+
 		nonExistentFileConfig := `
 db:
   dsn: "user:password@tcp(127.0.0.1:3306)/testdb"
@@ -620,7 +620,7 @@ sync:
 		tempDir := t.TempDir()
 		configFile := filepath.Join(tempDir, "dry_run_config.yml")
 		dataFile := filepath.Join(tempDir, "test_data.csv")
-		
+
 		// Create valid config with all required fields
 		validConfig := `
 db:
@@ -661,8 +661,8 @@ sync:
 	t.Run("invalid file format error", func(t *testing.T) {
 		tempDir := t.TempDir()
 		configFile := filepath.Join(tempDir, "invalid_format.yml")
-		dataFile := filepath.Join(tempDir, "invalid.txt")  // Unsupported file extension
-		
+		dataFile := filepath.Join(tempDir, "invalid.txt") // Unsupported file extension
+
 		validConfig := `
 db:
   dsn: "user:password@tcp(127.0.0.1:3306)/testdb"
