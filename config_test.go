@@ -48,9 +48,11 @@ func TestLoadConfig(t *testing.T) {
 		tempFile := filepath.Join(tempDir, "invalid.yml")
 
 		invalidYAML := `
-invalid: yaml: content:
-  - missing proper structure
-  malformed: [
+invalid yaml structure:
+  - unclosed bracket: [
+  - missing closing bracket
+  malformed:
+    - key: value: extra colon
 `
 		err := os.WriteFile(tempFile, []byte(invalidYAML), 0644)
 		if err != nil {
