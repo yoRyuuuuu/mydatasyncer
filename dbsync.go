@@ -408,6 +408,10 @@ func generateExecutionPlan(ctx context.Context, tx *sql.Tx, config Config, fileR
 }
 
 // syncData synchronizes data between file and database
+//
+// TRANSACTION BOUNDARY: Single-table synchronization uses one dedicated transaction per table.
+// Transaction scope: Load data → Sync operations → Commit/Rollback
+// If any operation fails, only this table's changes are rolled back.
 func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []DataRecord) error {
 	// Early return only for diff mode without deleteNotInFile
 	if len(fileRecords) == 0 {
@@ -920,12 +924,27 @@ func bulkDelete(ctx context.Context, tx *sql.Tx, config Config, records []DataRe
 }
 
 // syncMultipleTablesData synchronizes data for multiple tables with dependency order
+//
+// TRANSACTION BOUNDARY: This function implements a single global transaction for all tables.
+// All tables are synchronized within one shared transaction to ensure ACID properties
+// and maintain referential integrity across related tables with foreign key relationships.
+//
+// Transaction Flow:
+//  1. Load all data (outside transaction to minimize lock time)
+//  2. Calculate dependency order (outside transaction)
+//  3. Begin single transaction for all sync operations
+//  4. Execute all table syncs within the transaction
+//  5. Commit or rollback based on success/failure
+//
+// Error Handling: If ANY table sync fails, the ENTIRE multi-table operation is rolled back.
+// This all-or-nothing approach prevents partial sync states that could leave the database
+// in an inconsistent condition.
 func syncMultipleTablesData(ctx context.Context, db *sql.DB, config Config) error {
 	if !IsMultiTableConfig(config) {
 		return fmt.Errorf("config does not contain multi-table configuration")
 	}
 
-	// 1. Load data from all files
+	// 1. Load data from all files (OUTSIDE TRANSACTION)
 	// Note: For very large datasets, consider implementing streaming/batching to reduce memory usage
 	multiLoader := NewMultiTableLoader(config.Tables)
 	if err := multiLoader.ValidateFilePaths(); err != nil {
@@ -942,7 +961,7 @@ func syncMultipleTablesData(ctx context.Context, db *sql.DB, config Config) erro
 		log.Printf("Table '%s': %d records", tableName, len(records))
 	}
 
-	// 2. Determine synchronization order based on dependencies
+	// 2. Determine synchronization order based on dependencies (OUTSIDE TRANSACTION)
 	insertOrder, deleteOrder, err := GetSyncOrder(config.Tables)
 	if err != nil {
 		return fmt.Errorf("dependency order calculation error: %w", err)
@@ -950,12 +969,14 @@ func syncMultipleTablesData(ctx context.Context, db *sql.DB, config Config) erro
 
 	log.Printf("Synchronization order - Insert: %v, Delete: %v", insertOrder, deleteOrder)
 
-	// 3. Start transaction for all table synchronizations
+	// 3. Start SINGLE GLOBAL TRANSACTION for all table synchronizations
+	// This ensures all-or-nothing semantics across all related tables
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("transaction start error: %w", err)
 	}
-	defer tx.Rollback() // Rollback on error or if commit fails
+	// Automatic rollback on ANY error via defer - ensures cleanup if commit fails or panic occurs
+	defer tx.Rollback()
 
 	// 4. For dry-run mode, generate and display execution plan
 	if config.DryRun {
@@ -972,7 +993,8 @@ func syncMultipleTablesData(ctx context.Context, db *sql.DB, config Config) erro
 		return fmt.Errorf("multi-table sync execution error: %w", err)
 	}
 
-	// 6. Commit transaction
+	// 6. Commit transaction - only if ALL table syncs succeeded
+	// If commit fails, defer tx.Rollback() will handle cleanup
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("transaction commit error: %w", err)
 	}

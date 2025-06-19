@@ -5,10 +5,12 @@ The mydatasyncer is a utility for synchronizing data from various file formats t
 - **Two sync modes**:
   - **Overwrite mode**: Completely replaces all existing data in the target table
   - **Differential mode**: Updates only changed records, adds new records, and optionally deletes records not in the source file
+- **Multi-table synchronization**: Supports synchronizing multiple tables with dependency-aware ordering
+- **Parent-child relationships**: Automatic sync order determination based on foreign key dependencies
 - **Bulk operations**: Efficiently handles large datasets using bulk insert/update/delete operations
-- **Transaction support**: All operations are wrapped in a database transaction to ensure data integrity
+- **Transaction support**: All operations are wrapped in database transactions to ensure data integrity
 - **Simple configuration**: Easy to define target tables, columns, and primary keys
-- **Multiple format support**: Supports CSV with plans to add JSON, YAML, and other data formats
+- **Multiple format support**: Supports CSV and JSON formats with automatic type detection
 
 ## Installation
 
@@ -145,7 +147,9 @@ By default, it will use the built-in configuration. You can customize the behavi
 
 ### Configuration
 
-The configuration file uses YAML format with the following structure:
+The configuration file uses YAML format. There are two configuration styles: single-table and multi-table.
+
+#### Single-Table Configuration
 
 ```yaml
 # Database connection settings
@@ -154,7 +158,7 @@ db:
 
 # Synchronization settings
 sync:
-  # Input file path (CSV format)
+  # Input file path (CSV or JSON format)
   filePath: "./testdata.csv"
 
   # Target table name
@@ -188,6 +192,49 @@ sync:
   immutableColumns:
     - "created_at"  # Creation timestamp cannot be modified
 ```
+
+#### Multi-Table Configuration
+
+```yaml
+# Database connection settings
+db:
+  dsn: "user:password@tcp(127.0.0.1:3306)/testdb?parseTime=true"
+
+# Multi-table synchronization settings
+tables:
+  - tableName: "categories"
+    filePath: "./categories.json"
+    primaryKey: "category_id"
+    syncMode: "diff"
+    dependencies: []  # No dependencies (parent table)
+    
+  - tableName: "products"
+    filePath: "./products.csv"
+    primaryKey: "product_id"
+    syncMode: "diff"
+    dependencies: ["categories"]  # Depends on categories table
+    columns:
+      - product_id
+      - name
+      - category_id
+      - price
+    timestamps:
+      updatedAt: "updated_at"
+```
+
+#### Transaction Boundaries
+
+**Single-Table Synchronization:**
+- Each table sync runs in its own dedicated transaction
+- If the sync fails, only that table's changes are rolled back
+
+**Multi-Table Synchronization:**
+- **All tables are synchronized within a single global transaction**
+- **All-or-nothing approach**: If ANY table sync fails, the ENTIRE multi-table operation is rolled back
+- Ensures ACID properties and referential integrity across related tables with foreign key relationships
+- Dependency-aware processing order:
+  - Delete operations: Child tables → Parent tables (avoids foreign key violations)
+  - Insert/Update operations: Parent tables → Child tables (satisfies foreign key constraints)
 
 ### Sync Mode Details
 
