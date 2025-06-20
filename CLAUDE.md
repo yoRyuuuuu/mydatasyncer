@@ -98,6 +98,39 @@ docker compose down
 6. Execute sync operations (overwrite or differential) within transaction
 7. Commit or rollback based on success/failure
 
+### Transaction Boundaries and Data Integrity
+
+**Single-Table Synchronization:**
+- Each table sync operation runs within its own dedicated transaction
+- Transaction scope: Load data → Sync operations → Commit/Rollback
+- Failure in any step triggers automatic rollback for that table only
+
+**Multi-Table Synchronization:**
+- **Single Global Transaction**: All tables are synchronized within one shared transaction boundary
+- **All-or-Nothing Approach**: If any single table sync fails, the entire multi-table operation is rolled back
+- **Transaction Scope**: Data loading (outside transaction) → Single transaction for all sync operations → Global commit/rollback
+- **Dependency-Aware Processing**: 
+  - Delete operations: Child tables → Parent tables (to avoid foreign key violations)
+  - Insert/Update operations: Parent tables → Child tables (to satisfy foreign key constraints)
+
+**Design Rationale:**
+- Ensures ACID properties across related tables with foreign key relationships
+- Maintains referential integrity throughout the entire synchronization process
+- Prevents partial sync states that could leave the database in an inconsistent condition
+- Simplifies rollback logic and error recovery
+
+**Performance Considerations:**
+- Single transaction may hold locks longer for multi-table operations
+- Default 5-minute timeout prevents indefinite lock situations
+- Bulk operations optimize performance within transaction boundaries
+- Memory usage is managed by loading all data before transaction begins
+
+**Error Handling:**
+- Automatic rollback via `defer tx.Rollback()` ensures cleanup on any failure
+- Detailed error reporting includes which table and operation failed
+- Dry-run mode allows preview of all changes before committing
+- Transaction isolation level (default: REPEATABLE READ) provides consistent data view
+
 ### Column Mapping Logic
 The system automatically determines which columns to sync based on:
 - File headers (CSV headers or JSON object keys from first record)
