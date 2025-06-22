@@ -69,6 +69,18 @@ go test -v -run TestE2ESyncJSON
 go test -v -run "TestJSONLoader_Load_Success/precise_type_conversion_handling"
 ```
 
+### Code Linting and Formatting
+```bash
+# Format code before committing
+go fmt ./...
+
+# Run linter (requires golangci-lint)
+golangci-lint run
+
+# Install golangci-lint (if not installed)
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+```
+
 ### Development Environment
 ```bash
 # Start MySQL database for development
@@ -147,3 +159,11 @@ This ensures robust handling of schema mismatches and provides clear error messa
 ## Code Style
 - Think and write comments in English (following project conventions)
 - Go standard formatting and naming conventions
+- Use `go fmt ./...` to format code before committing
+- Run `golangci-lint run` to check for linting issues (configuration in .golangci.yaml)
+
+## important-instruction-reminders
+Do what has been asked; nothing more, nothing less.
+NEVER create files unless they're absolutely necessary for achieving your goal.
+ALWAYS prefer editing an existing file to creating a new one.
+NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.

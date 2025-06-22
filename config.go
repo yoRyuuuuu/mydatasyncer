@@ -209,19 +209,60 @@ func validateTablesBasicFields(tables []TableSyncConfig) error {
 	return nil
 }
 
+// DependencyError represents an error with missing dependency information
+type DependencyError struct {
+	TableName         string
+	TableIndex        int
+	MissingDependency string
+	AvailableTables   []string
+}
+
+func (e *DependencyError) Error() string {
+	return fmt.Sprintf("❌ Configuration Error: Dependency Missing\nTable: %s (index: %d)\nMissing dependency: '%s'",
+		e.TableName, e.TableIndex, e.MissingDependency)
+}
+
+// GetDetailedErrorMessage returns a comprehensive error message with solutions
+func (e *DependencyError) GetDetailedErrorMessage() string {
+	var msg strings.Builder
+
+	msg.WriteString(fmt.Sprintf("❌ Configuration Error: Dependency Missing\n"))
+	msg.WriteString(fmt.Sprintf("Table: %s (index: %d)\n", e.TableName, e.TableIndex))
+	msg.WriteString(fmt.Sprintf("Missing dependency: '%s'\n\n", e.MissingDependency))
+
+	msg.WriteString("💡 Solutions:\n")
+	msg.WriteString(fmt.Sprintf("1. Add '%s' table to your configuration\n", e.MissingDependency))
+	msg.WriteString(fmt.Sprintf("2. Remove '%s' from %s.dependencies\n", e.MissingDependency, e.TableName))
+	msg.WriteString("3. Check for typos in table names\n\n")
+
+	if len(e.AvailableTables) > 0 {
+		sort.Strings(e.AvailableTables)
+		msg.WriteString(fmt.Sprintf("Available tables: %s\n", strings.Join(e.AvailableTables, ", ")))
+	}
+
+	return msg.String()
+}
+
 // validateTableDependencies validates that all dependencies exist in the configuration
 func validateTableDependencies(tables []TableSyncConfig) error {
 	// Create a map of table names for efficient lookup
 	tableNames := make(map[string]bool)
+	availableTables := make([]string, 0, len(tables))
 	for _, table := range tables {
 		tableNames[table.Name] = true
+		availableTables = append(availableTables, table.Name)
 	}
 
 	// Validate dependencies
 	for i, table := range tables {
 		for _, dep := range table.Dependencies {
 			if !tableNames[dep] {
-				return fmt.Errorf("table[%d] (%s): dependency '%s' not found in configuration", i, table.Name, dep)
+				return &DependencyError{
+					TableName:         table.Name,
+					TableIndex:        i,
+					MissingDependency: dep,
+					AvailableTables:   availableTables,
+				}
 			}
 		}
 	}
