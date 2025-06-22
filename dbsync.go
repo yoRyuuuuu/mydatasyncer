@@ -961,6 +961,25 @@ func syncMultipleTablesData(ctx context.Context, db *sql.DB, config Config) erro
 		log.Printf("Table '%s': %d records", tableName, len(records))
 	}
 
+	// 🚨 STRICT PRIMARY KEY VALIDATION for all tables - Always enforced for data safety
+	validator := NewPrimaryKeyValidator()
+	for _, tableConfig := range config.Tables {
+		if tableConfig.SyncMode == "diff" && tableConfig.PrimaryKey != "" {
+			records, exists := allData[tableConfig.Name]
+			if !exists {
+				continue // Skip if no data for this table
+			}
+
+			log.Printf("Validating primary keys for table '%s'...", tableConfig.Name)
+			validationResult, err := validator.ValidateAllRecords(records, tableConfig.PrimaryKey)
+			if err != nil {
+				log.Printf("Primary key validation failed for table '%s'", tableConfig.Name)
+				validator.ReportValidationFailure(validationResult)
+				return fmt.Errorf("primary key validation failed for table '%s': %w", tableConfig.Name, err)
+			}
+		}
+	}
+
 	// 2. Determine synchronization order based on dependencies (OUTSIDE TRANSACTION)
 	insertOrder, deleteOrder, err := GetSyncOrder(config.Tables)
 	if err != nil {

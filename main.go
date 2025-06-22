@@ -96,6 +96,17 @@ func RunApp(configPath string, dryRun bool) error {
 		}
 		log.Printf("Loaded %d records from file.", len(records))
 
+		// 🚨 STRICT PRIMARY KEY VALIDATION - Always enforced for data safety
+		if config.Sync.SyncMode == "diff" && config.Sync.PrimaryKey != "" {
+			validator := NewPrimaryKeyValidator()
+			validationResult, err := validator.ValidateAllRecords(records, config.Sync.PrimaryKey)
+			if err != nil {
+				// Report detailed validation failure
+				validator.ReportValidationFailure(validationResult)
+				return fmt.Errorf("primary key validation failed: %w", err)
+			}
+		}
+
 		err = syncData(ctx, db, config, records)
 		if err != nil {
 			return fmt.Errorf("data synchronization error: %w", err)
