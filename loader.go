@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -64,10 +65,9 @@ func NewCSVLoader(filePath string) *CSVLoader {
 	}
 }
 
-// WithDelimiter returns a CSV loader with the specified delimiter
-func (l *CSVLoader) WithDelimiter(delimiter rune) *CSVLoader {
+// WithDelimiter sets the delimiter for the CSV loader
+func (l *CSVLoader) WithDelimiter(delimiter rune) {
 	l.Delimiter = delimiter
-	return l
 }
 
 // Load loads data from CSV file.
@@ -86,7 +86,7 @@ func (l *CSVLoader) Load(columns []string) ([]DataRecord, error) {
 	// Read header row
 	headerNames, err := reader.Read()
 	if err != nil {
-		if err == csv.ErrFieldCount || errors.Is(err, io.EOF) { // Check for empty file or just header
+		if errors.Is(err, csv.ErrFieldCount) || errors.Is(err, io.EOF) { // Check for empty file or just header
 			return nil, fmt.Errorf("CSV file '%s' must contain a header row and at least one data row: %w", l.FilePath, err)
 		}
 		return nil, fmt.Errorf("error reading header row from CSV file '%s': %w", l.FilePath, err)
@@ -108,11 +108,8 @@ func (l *CSVLoader) Load(columns []string) ([]DataRecord, error) {
 	} else {
 		// Filter to only include specified columns that exist in CSV header
 		for _, col := range columns {
-			for _, headerCol := range headerNames {
-				if col == headerCol {
-					targetColumns = append(targetColumns, col)
-					break
-				}
+			if slices.Contains(headerNames, col) {
+				targetColumns = append(targetColumns, col)
 			}
 		}
 	}

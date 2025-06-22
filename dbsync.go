@@ -104,9 +104,15 @@ func convertValueToString(val any) string {
 	rv := reflect.ValueOf(val)
 	switch rv.Kind() {
 	case reflect.String:
-		return val.(string)
+		if s, ok := val.(string); ok {
+			return s
+		}
+		return fmt.Sprintf("%v", val)
 	case reflect.Bool:
-		return strconv.FormatBool(val.(bool))
+		if b, ok := val.(bool); ok {
+			return strconv.FormatBool(b)
+		}
+		return fmt.Sprintf("%v", val)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return strconv.FormatInt(rv.Int(), 10)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
@@ -200,14 +206,7 @@ func (p *ExecutionPlan) String() string {
 		// Filter out immutable columns from affected columns for UPDATE
 		var updateableColumns []string
 		for _, col := range p.AffectedColumns {
-			isImmutable := false
-			for _, immutableCol := range p.ImmutableColumns {
-				if col == immutableCol {
-					isImmutable = true
-					break
-				}
-			}
-			if !isImmutable {
+			if !slices.Contains(p.ImmutableColumns, col) {
 				updateableColumns = append(updateableColumns, col)
 			}
 		}
@@ -239,14 +238,7 @@ func (p *ExecutionPlan) String() string {
 			// Show timestamp values that will be set
 			for _, tsCol := range p.TimestampColumns {
 				// Check if the timestamp column is not immutable
-				isImmutable := false
-				for _, immutableCol := range p.ImmutableColumns {
-					if tsCol == immutableCol {
-						isImmutable = true
-						break
-					}
-				}
-				if !isImmutable {
+				if !slices.Contains(p.ImmutableColumns, tsCol) {
 					buf.WriteString(fmt.Sprintf("   %s: %v (will be set)\n", tsCol, now.Format(time.RFC3339)))
 				}
 			}
@@ -364,7 +356,7 @@ func generateExecutionPlan(ctx context.Context, tx *sql.Tx, config Config, fileR
 	}
 
 	switch config.Sync.SyncMode {
-	case "overwrite":
+	case SyncModeOverwrite:
 		// For overwrite mode, all records will be deleted and reinserted
 		dbRecords, err := getCurrentDBData(ctx, tx, config, actualSyncCols) // Pass actualSyncCols
 		if err != nil {
@@ -377,7 +369,7 @@ func generateExecutionPlan(ctx context.Context, tx *sql.Tx, config Config, fileR
 		}
 		plan.InsertOperations = fileRecords
 
-	case "diff":
+	case SyncModeDiff:
 		// For diff mode, calculate the actual differences
 		if config.Sync.PrimaryKey == "" {
 			return nil, fmt.Errorf("primary key is required for diff sync mode but is not configured")
@@ -415,14 +407,14 @@ func generateExecutionPlan(ctx context.Context, tx *sql.Tx, config Config, fileR
 func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []DataRecord) error {
 	// Early return only for diff mode without deleteNotInFile
 	if len(fileRecords) == 0 {
-		if config.Sync.SyncMode == "diff" && !config.Sync.DeleteNotInFile {
+		if config.Sync.SyncMode == SyncModeDiff && !config.Sync.DeleteNotInFile {
 			log.Println("No records loaded from file. Nothing to sync.")
 			return nil
 		}
 		// Log the intention for overwrite or diff+deleteNotInFile modes
-		if config.Sync.SyncMode == "overwrite" {
+		if config.Sync.SyncMode == SyncModeOverwrite {
 			log.Println("File is empty. In overwrite mode, all existing data will be deleted.")
-		} else if config.Sync.SyncMode == "diff" && config.Sync.DeleteNotInFile {
+		} else if config.Sync.SyncMode == SyncModeDiff && config.Sync.DeleteNotInFile {
 			log.Println("File is empty. In diff mode with deleteNotInFile, all existing data may be deleted.")
 		}
 	}
@@ -461,7 +453,7 @@ func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []Data
 		actualSyncColumns = dbTableCols
 
 		// Primary key validation for diff mode
-		if config.Sync.SyncMode == "diff" && config.Sync.PrimaryKey == "" {
+		if config.Sync.SyncMode == SyncModeDiff && config.Sync.PrimaryKey == "" {
 			return fmt.Errorf("primary key must be configured for diff mode with deleteNotInFile when file is empty")
 		}
 	}
@@ -479,9 +471,9 @@ func syncData(ctx context.Context, db *sql.DB, config Config, fileRecords []Data
 	}
 
 	switch config.Sync.SyncMode {
-	case "overwrite":
+	case SyncModeOverwrite:
 		err = syncOverwrite(ctx, tx, config, fileRecords, actualSyncColumns) // Pass actualSyncCols
-	case "diff":
+	case SyncModeDiff:
 		err = syncDiff(ctx, tx, config, fileRecords, actualSyncColumns) // Pass actualSyncCols
 	default:
 		return fmt.Errorf("unknown sync mode: %s", config.Sync.SyncMode)
@@ -961,7 +953,7 @@ func syncMultipleTablesData(ctx context.Context, db *sql.DB, config Config) erro
 	// 🚨 STRICT PRIMARY KEY VALIDATION for all tables - Always enforced for data safety
 	validator := NewPrimaryKeyValidator()
 	for _, tableConfig := range config.Tables {
-		if tableConfig.SyncMode == "diff" && tableConfig.PrimaryKey != "" {
+		if tableConfig.SyncMode == SyncModeDiff && tableConfig.PrimaryKey != "" {
 			records, exists := allData[tableConfig.Name]
 			if !exists {
 				continue // Skip if no data for this table
@@ -1019,7 +1011,7 @@ func syncMultipleTablesData(ctx context.Context, db *sql.DB, config Config) erro
 }
 
 // generateMultiTableExecutionPlan creates and displays execution plan for multiple tables
-func generateMultiTableExecutionPlan(ctx context.Context, db *sql.DB, tx *sql.Tx, config Config, allData MultiTableData, insertOrder []string, deleteOrder []string) error {
+func generateMultiTableExecutionPlan(ctx context.Context, db *sql.DB, _ *sql.Tx, config Config, allData MultiTableData, insertOrder []string, deleteOrder []string) error {
 	log.Println("[DRY-RUN Mode] Multi-Table Execution Plan")
 	log.Println("====================================================")
 
@@ -1167,7 +1159,7 @@ func executeSingleTableSync(ctx context.Context, tx *sql.Tx, config Config, tabl
 	switch phase {
 	case "delete":
 		// Only execute delete phase for diff mode with deleteNotInFile
-		if singleConfig.Sync.SyncMode == "diff" && singleConfig.Sync.DeleteNotInFile {
+		if singleConfig.Sync.SyncMode == SyncModeDiff && singleConfig.Sync.DeleteNotInFile {
 			return executeDeletePhase(ctx, tx, singleConfig, tableData, actualSyncColumns)
 		}
 		return nil // Skip delete for other modes
@@ -1180,7 +1172,7 @@ func executeSingleTableSync(ctx context.Context, tx *sql.Tx, config Config, tabl
 
 // executeDeletePhase handles delete operations for a single table in multi-table sync
 func executeDeletePhase(ctx context.Context, tx *sql.Tx, config Config, tableData []DataRecord, actualSyncColumns []string) error {
-	if config.Sync.SyncMode != "diff" {
+	if config.Sync.SyncMode != SyncModeDiff {
 		return nil // Only diff mode supports delete operations
 	}
 
@@ -1226,9 +1218,9 @@ func executeDeletePhase(ctx context.Context, tx *sql.Tx, config Config, tableDat
 // executeInsertUpdatePhase handles insert and update operations for a single table in multi-table sync
 func executeInsertUpdatePhase(ctx context.Context, tx *sql.Tx, config Config, tableData []DataRecord, actualSyncColumns []string) error {
 	switch config.Sync.SyncMode {
-	case "overwrite":
+	case SyncModeOverwrite:
 		return executeOverwritePhase(ctx, tx, config, tableData, actualSyncColumns)
-	case "diff":
+	case SyncModeDiff:
 		return executeDiffInsertUpdatePhase(ctx, tx, config, tableData, actualSyncColumns)
 	default:
 		return fmt.Errorf("unknown sync mode: %s", config.Sync.SyncMode)

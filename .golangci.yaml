@@ -71,9 +71,6 @@ linters:
     warn-unused: true
     rules:
       - linters:
-          - goconst
-        path: ".*_test\\.go"
-      - linters:
           - errcheck
         source: "defer.*\\("
       - linters:

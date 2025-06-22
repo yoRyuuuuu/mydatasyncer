@@ -97,7 +97,7 @@ func createTestConfig() Config {
 			PrimaryKey:       "id",
 			Columns:          []string{"id", "name", "value"},
 			TimestampColumns: []string{"created_at", "updated_at"},
-			SyncMode:         "diff",
+			SyncMode:         SyncModeDiff,
 			DeleteNotInFile:  true,
 		},
 	}
@@ -108,7 +108,7 @@ func TestSyncOverwrite(t *testing.T) {
 	defer db.Close()
 
 	config := createTestConfig()
-	config.Sync.SyncMode = "overwrite"
+	config.Sync.SyncMode = SyncModeOverwrite
 
 	t.Run("sync to empty database", func(t *testing.T) {
 		cleanupTestData(t, db)
@@ -191,7 +191,7 @@ func TestSyncOverwrite(t *testing.T) {
 		cleanupTestData(t, db)
 		localConfig := createTestConfig()
 		localConfig.Sync.Columns = []string{} // Empty
-		localConfig.Sync.SyncMode = "overwrite"
+		localConfig.Sync.SyncMode = SyncModeOverwrite
 
 		// Insert some initial data that should be wiped
 		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)",
@@ -244,7 +244,7 @@ func TestSyncOverwrite(t *testing.T) {
 		cleanupTestData(t, db)
 		localConfig := createTestConfig()
 		localConfig.Sync.Columns = []string{"id", "name"} // Only sync id and name
-		localConfig.Sync.SyncMode = "overwrite"
+		localConfig.Sync.SyncMode = SyncModeOverwrite
 
 		// Insert some initial data that should be wiped
 		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)",
@@ -307,7 +307,7 @@ func TestSyncDiff(t *testing.T) {
 	defer db.Close()
 
 	config := createTestConfig()
-	config.Sync.SyncMode = "diff"
+	config.Sync.SyncMode = SyncModeDiff
 
 	t.Run("diff sync to empty database", func(t *testing.T) {
 		cleanupTestData(t, db)
@@ -403,7 +403,7 @@ func TestSyncDiff(t *testing.T) {
 		}
 
 		localConfig := createTestConfig() // Use a local config for this subtest
-		localConfig.Sync.SyncMode = "diff"
+		localConfig.Sync.SyncMode = SyncModeDiff
 		localConfig.Sync.ImmutableColumns = []string{"name"}
 
 		fileRecords := []DataRecord{
@@ -433,7 +433,7 @@ func TestSyncDiff(t *testing.T) {
 		cleanupTestData(t, db)
 		localConfig := createTestConfig()
 		localConfig.Sync.Columns = []string{} // Empty, so CSV header and DB cols determine sync
-		localConfig.Sync.SyncMode = "diff"
+		localConfig.Sync.SyncMode = SyncModeDiff
 
 		// DB has id, name, value
 		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)",
@@ -484,7 +484,7 @@ func TestSyncDiff(t *testing.T) {
 		cleanupTestData(t, db)
 		localConfig := createTestConfig()
 		localConfig.Sync.Columns = []string{"id", "name"}
-		localConfig.Sync.SyncMode = "diff"
+		localConfig.Sync.SyncMode = SyncModeDiff
 
 		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)",
 			"1", "db_name1", "db_value1")
@@ -612,7 +612,7 @@ func TestSyncDataEmptyFile(t *testing.T) {
 	t.Run("diff mode without deleteNotInFile with empty file", func(t *testing.T) {
 		cleanupTestData(t, db)
 		config := createTestConfig()
-		config.Sync.SyncMode = "diff"
+		config.Sync.SyncMode = SyncModeDiff
 		config.Sync.DeleteNotInFile = false
 
 		// Insert some initial data
@@ -654,7 +654,7 @@ func TestSyncDataEmptyFile(t *testing.T) {
 	t.Run("diff mode with deleteNotInFile and empty file", func(t *testing.T) {
 		cleanupTestData(t, db)
 		config := createTestConfig()
-		config.Sync.SyncMode = "diff"
+		config.Sync.SyncMode = SyncModeDiff
 		config.Sync.DeleteNotInFile = true
 
 		// Insert some initial data
@@ -696,7 +696,7 @@ func TestSyncDataEmptyFile(t *testing.T) {
 	t.Run("overwrite mode with empty file", func(t *testing.T) {
 		cleanupTestData(t, db)
 		config := createTestConfig()
-		config.Sync.SyncMode = "overwrite"
+		config.Sync.SyncMode = SyncModeOverwrite
 
 		// Insert some initial data
 		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)", "1", "test1", "value1")
@@ -750,7 +750,7 @@ func TestDryRunOverwriteMode(t *testing.T) {
 
 	config := createTestConfig()
 	config.DryRun = true
-	config.Sync.SyncMode = "overwrite"
+	config.Sync.SyncMode = SyncModeOverwrite
 
 	fileRecords := []DataRecord{
 		{"id": "3", "name": "new3", "value": "new_value3"},
@@ -806,7 +806,7 @@ func TestDryRunDiffMode(t *testing.T) {
 
 	config := createTestConfig()
 	config.DryRun = true
-	config.Sync.SyncMode = "diff"
+	config.Sync.SyncMode = SyncModeDiff
 
 	fileRecords := []DataRecord{
 		{"id": "1", "name": "new1", "value": "new_value1"},
@@ -850,7 +850,7 @@ func TestDryRunDiffMode(t *testing.T) {
 
 func TestExecutionPlanString(t *testing.T) {
 	plan := &ExecutionPlan{
-		SyncMode:        "diff",
+		SyncMode:        SyncModeDiff,
 		TableName:       "test_table",
 		FileRecordCount: 3,
 		DbRecordCount:   3,
@@ -1276,7 +1276,7 @@ func TestDetermineActualSyncColumns(t *testing.T) {
 func TestValidateDiffSyncRequirements(t *testing.T) {
 	t.Run("valid diff sync config", func(t *testing.T) {
 		config := createTestConfig()
-		config.Sync.SyncMode = "diff"
+		config.Sync.SyncMode = SyncModeDiff
 		config.Sync.PrimaryKey = "id"
 		syncCols := []string{"id", "name", "value"}
 
@@ -1288,7 +1288,7 @@ func TestValidateDiffSyncRequirements(t *testing.T) {
 
 	t.Run("diff sync without primary key", func(t *testing.T) {
 		config := createTestConfig()
-		config.Sync.SyncMode = "diff"
+		config.Sync.SyncMode = SyncModeDiff
 		config.Sync.PrimaryKey = ""
 		syncCols := []string{"name", "value"}
 
@@ -1303,7 +1303,7 @@ func TestValidateDiffSyncRequirements(t *testing.T) {
 
 	t.Run("primary key not in sync columns", func(t *testing.T) {
 		config := createTestConfig()
-		config.Sync.SyncMode = "diff"
+		config.Sync.SyncMode = SyncModeDiff
 		config.Sync.PrimaryKey = "id"
 		syncCols := []string{"name", "value"} // id not included
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -199,11 +200,8 @@ func TestPrimaryKeyValidator_ValidateAllRecords(t *testing.T) {
 			if tt.expectedInvalid > 0 && len(tt.expectedReasons) > 0 {
 				found := false
 				for _, invalid := range result.InvalidRecords {
-					for _, expectedReason := range tt.expectedReasons {
-						if invalid.Reason == expectedReason {
-							found = true
-							break
-						}
+					if slices.Contains(tt.expectedReasons, invalid.Reason) {
+						found = true
 					}
 					if found {
 						break
@@ -295,7 +293,7 @@ func TestPrimaryKeyValidator_validatePrimaryKeyFormat(t *testing.T) {
 	}
 }
 
-func TestPrimaryKeyValidator_ReportValidationFailure(t *testing.T) {
+func TestPrimaryKeyValidator_ReportValidationFailure(_ *testing.T) {
 	validator := NewPrimaryKeyValidator()
 
 	// Create a validation result with various types of errors

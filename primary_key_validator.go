@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -156,13 +157,7 @@ func (pkv *PrimaryKeyValidator) isNullOrEmpty(value string) bool {
 	lower := strings.ToLower(strings.TrimSpace(value))
 	nullValues := []string{"null", "nil", "\\n", "n/a", "na", "none", "undefined"}
 
-	for _, nullVal := range nullValues {
-		if lower == nullVal {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(nullValues, lower)
 }
 
 // validatePrimaryKeyFormat performs additional format validation for primary keys

@@ -109,7 +109,7 @@ sync:
 		if cfg.Sync.PrimaryKey != "id" {
 			t.Errorf("Expected primary key from file, got %q", cfg.Sync.PrimaryKey)
 		}
-		if cfg.Sync.SyncMode != "diff" {
+		if cfg.Sync.SyncMode != SyncModeDiff {
 			t.Errorf("Expected sync mode from file, got %q", cfg.Sync.SyncMode)
 		}
 	})
@@ -254,7 +254,7 @@ func TestValidateConfig(t *testing.T) {
 				FilePath:   "data.csv",
 				TableName:  "test_table",
 				PrimaryKey: "id",
-				SyncMode:   "diff",
+				SyncMode:   SyncModeDiff,
 			},
 		}
 
@@ -273,7 +273,7 @@ func TestValidateConfig(t *testing.T) {
 				FilePath:   "data.csv",
 				TableName:  "test_table",
 				PrimaryKey: "id",
-				SyncMode:   "diff",
+				SyncMode:   SyncModeDiff,
 			},
 		}
 
@@ -295,7 +295,7 @@ func TestValidateConfig(t *testing.T) {
 				FilePath:   "", // Empty file path
 				TableName:  "test_table",
 				PrimaryKey: "id",
-				SyncMode:   "diff",
+				SyncMode:   SyncModeDiff,
 			},
 		}
 
@@ -317,7 +317,7 @@ func TestValidateConfig(t *testing.T) {
 				FilePath:   "data.csv",
 				TableName:  "", // Empty table name
 				PrimaryKey: "id",
-				SyncMode:   "diff",
+				SyncMode:   SyncModeDiff,
 			},
 		}
 
@@ -361,7 +361,7 @@ func TestValidateConfig(t *testing.T) {
 				FilePath:   "data.csv",
 				TableName:  "test_table",
 				PrimaryKey: "", // Empty primary key with diff mode
-				SyncMode:   "diff",
+				SyncMode:   SyncModeDiff,
 			},
 		}
 
@@ -383,7 +383,7 @@ func TestValidateConfig(t *testing.T) {
 				FilePath:   "data.csv",
 				TableName:  "test_table",
 				PrimaryKey: "", // Empty primary key but overwrite mode
-				SyncMode:   "overwrite",
+				SyncMode:   SyncModeOverwrite,
 			},
 		}
 

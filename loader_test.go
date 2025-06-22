@@ -98,13 +98,10 @@ func TestCSVLoader_Load_Success(t *testing.T) {
 				if !reflect.DeepEqual(firstRecordKeys, sortedExpectedHeader) {
 					t.Errorf("Header mismatch based on record keys: got %v, want %v", firstRecordKeys, sortedExpectedHeader)
 				}
-			} else if len(tt.expected) == 0 && len(tt.expectedHeader) > 0 {
-				// If no records but header was expected (e.g. "header only" case),
-				// we can't verify header via record keys.
-				// The fact that Load didn't error implies header was parsed.
-				// A more direct way would be to expose loader.header (if it existed and was populated before returning).
-				// For now, this relies on the loader correctly parsing the header to produce DataRecord keys.
 			}
+			// Note: If no records but header was expected (e.g. "header only" case),
+			// we can't verify header via record keys.
+			// The fact that Load didn't error implies header was parsed.
 		})
 	}
 }
