@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -14,7 +15,8 @@ import (
 
 // CustomUsage prints a custom formatted usage message
 func CustomUsage() {
-	fmt.Fprintf(os.Stdout, `mydatasyncer - Database Synchronization Tool
+	fmt.Fprintf(os.Stdout, //nolint:errcheck
+		`mydatasyncer - Database Synchronization Tool
 
 Usage:
   mydatasyncer [options]
@@ -22,7 +24,8 @@ Usage:
 Options:
 `)
 	flag.PrintDefaults()
-	fmt.Fprintf(os.Stdout, `
+	fmt.Fprintf(os.Stdout, //nolint:errcheck
+		`
 Examples:
   Basic usage:
     $ mydatasyncer -config ./config.yml
@@ -52,6 +55,7 @@ func main() {
 	}
 }
 
+// RunApp is the main entry point for the application
 func RunApp(configPath string, dryRun bool) error {
 	// Create a context with timeout for the entire process
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -67,12 +71,14 @@ func RunApp(configPath string, dryRun bool) error {
 
 	if err := ValidateConfig(config); err != nil {
 		// Check if it's a DependencyError for enhanced error reporting
-		if depErr, ok := err.(*DependencyError); ok {
+		var depErr *DependencyError
+		if errors.As(err, &depErr) {
 			log.Printf("%s", depErr.GetDetailedErrorMessage())
 			return fmt.Errorf("configuration validation failed")
 		}
 		// Check if it's a CircularDependencyError for enhanced error reporting
-		if circErr, ok := err.(*CircularDependencyError); ok {
+		var circErr *CircularDependencyError
+		if errors.As(err, &circErr) {
 			log.Printf("%s", circErr.GetDetailedErrorMessage())
 			return fmt.Errorf("configuration validation failed")
 		}
@@ -107,7 +113,7 @@ func RunApp(configPath string, dryRun bool) error {
 		log.Printf("Loaded %d records from file.", len(records))
 
 		// 🚨 STRICT PRIMARY KEY VALIDATION - Always enforced for data safety
-		if config.Sync.SyncMode == "diff" && config.Sync.PrimaryKey != "" {
+		if config.Sync.SyncMode == SyncModeDiff && config.Sync.PrimaryKey != "" {
 			validator := NewPrimaryKeyValidator()
 			validationResult, err := validator.ValidateAllRecords(records, config.Sync.PrimaryKey)
 			if err != nil {

@@ -1,0 +1,84 @@
+version: "2"
+
+run:
+  timeout: "10m"
+  go: "1.24"
+
+issues:
+  max-same-issues: 0
+
+linters:
+  enable: # Alphabetic order
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - canonicalheader
+    - containedctx
+    - copyloopvar
+    - decorder
+    - dogsled
+    - durationcheck
+    - errcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - fatcontext
+    - forcetypeassert
+    - gocheckcompilerdirectives
+    - gochecknoinits
+    - goconst
+    - gomoddirectives
+    - govet
+    - ineffassign
+    - interfacebloat
+    - intrange
+    - makezero
+    - misspell
+    - mirror
+    - nakedret
+    - nilerr
+    - noctx
+    - nolintlint
+    - nosprintfhostport
+    - prealloc
+    - predeclared
+    - reassign
+    - revive
+    - rowserrcheck
+    - sloglint
+    - sqlclosecheck
+    - staticcheck
+    - tagliatelle
+    - usetesting
+    - thelper
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - wastedassign
+    - whitespace
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+      disable-default-exclusions: false
+    tagliatelle:
+      case:
+        use-field-name: true
+        rules:
+          json: snake
+  exclusions:
+    warn-unused: true
+    rules:
+      - linters:
+          - errcheck
+        source: "defer.*\\("
+      - linters:
+          - errcheck
+        source: "db\\.Close\\(\\)"
+        path: ".*_test\\.go"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

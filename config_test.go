@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,9 +12,12 @@ func TestLoadConfig(t *testing.T) {
 	t.Run("empty config path uses default", func(t *testing.T) {
 		// Move to a temporary directory where mydatasyncer.yml doesn't exist
 		tempDir := t.TempDir()
-		originalWd, _ := os.Getwd()
-		defer os.Chdir(originalWd)
-		os.Chdir(tempDir)
+		originalWd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("Failed to get current working directory: %v", err)
+		}
+		defer t.Chdir(originalWd)
+		t.Chdir(tempDir)
 
 		// This will try to load "mydatasyncer.yml" which doesn't exist in temp dir
 		// Should fall back to default config
@@ -105,7 +109,7 @@ sync:
 		if cfg.Sync.PrimaryKey != "id" {
 			t.Errorf("Expected primary key from file, got %q", cfg.Sync.PrimaryKey)
 		}
-		if cfg.Sync.SyncMode != "diff" {
+		if cfg.Sync.SyncMode != SyncModeDiff {
 			t.Errorf("Expected sync mode from file, got %q", cfg.Sync.SyncMode)
 		}
 	})
@@ -250,7 +254,7 @@ func TestValidateConfig(t *testing.T) {
 				FilePath:   "data.csv",
 				TableName:  "test_table",
 				PrimaryKey: "id",
-				SyncMode:   "diff",
+				SyncMode:   SyncModeDiff,
 			},
 		}
 
@@ -269,7 +273,7 @@ func TestValidateConfig(t *testing.T) {
 				FilePath:   "data.csv",
 				TableName:  "test_table",
 				PrimaryKey: "id",
-				SyncMode:   "diff",
+				SyncMode:   SyncModeDiff,
 			},
 		}
 
@@ -291,7 +295,7 @@ func TestValidateConfig(t *testing.T) {
 				FilePath:   "", // Empty file path
 				TableName:  "test_table",
 				PrimaryKey: "id",
-				SyncMode:   "diff",
+				SyncMode:   SyncModeDiff,
 			},
 		}
 
@@ -313,7 +317,7 @@ func TestValidateConfig(t *testing.T) {
 				FilePath:   "data.csv",
 				TableName:  "", // Empty table name
 				PrimaryKey: "id",
-				SyncMode:   "diff",
+				SyncMode:   SyncModeDiff,
 			},
 		}
 
@@ -357,7 +361,7 @@ func TestValidateConfig(t *testing.T) {
 				FilePath:   "data.csv",
 				TableName:  "test_table",
 				PrimaryKey: "", // Empty primary key with diff mode
-				SyncMode:   "diff",
+				SyncMode:   SyncModeDiff,
 			},
 		}
 
@@ -379,7 +383,7 @@ func TestValidateConfig(t *testing.T) {
 				FilePath:   "data.csv",
 				TableName:  "test_table",
 				PrimaryKey: "", // Empty primary key but overwrite mode
-				SyncMode:   "overwrite",
+				SyncMode:   SyncModeOverwrite,
 			},
 		}
 
@@ -725,8 +729,8 @@ func TestCircularDependencyError(t *testing.T) {
 			}
 
 			// Check if error is of correct type
-			cycleErr, ok := err.(*CircularDependencyError)
-			if !ok {
+			var cycleErr *CircularDependencyError
+			if !errors.As(err, &cycleErr) {
 				t.Errorf("Expected CircularDependencyError, got %T: %v", err, err)
 				return
 			}

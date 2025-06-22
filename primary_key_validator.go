@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -156,13 +157,7 @@ func (pkv *PrimaryKeyValidator) isNullOrEmpty(value string) bool {
 	lower := strings.ToLower(strings.TrimSpace(value))
 	nullValues := []string{"null", "nil", "\\n", "n/a", "na", "none", "undefined"}
 
-	for _, nullVal := range nullValues {
-		if lower == nullVal {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(nullValues, lower)
 }
 
 // validatePrimaryKeyFormat performs additional format validation for primary keys
@@ -206,7 +201,7 @@ func (pkv *PrimaryKeyValidator) generateErrorSummary(result *PrimaryKeyValidatio
 		len(result.InvalidRecords), result.TotalRecords))
 
 	summary.WriteString("Issues: ")
-	var issues []string
+	issues := make([]string, 0, len(issueCount))
 	for reason, count := range issueCount {
 		issues = append(issues, fmt.Sprintf("%s (%d)", reason, count))
 	}
@@ -291,17 +286,9 @@ func (pkv *PrimaryKeyValidator) formatReasonDescription(reason string) string {
 
 // formatIndicesForDisplay formats record indices for user-friendly display
 func (pkv *PrimaryKeyValidator) formatIndicesForDisplay(indices []int) string {
-	var displayIndices []string
+	displayIndices := make([]string, 0, len(indices))
 	for _, idx := range indices {
 		displayIndices = append(displayIndices, strconv.Itoa(idx+1)) // Convert to 1-based indexing
 	}
 	return strings.Join(displayIndices, ", ")
-}
-
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

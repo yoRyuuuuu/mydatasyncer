@@ -60,6 +60,8 @@ type DataTypesTestRecord struct {
 
 // e2eSetupTestDB connects to the database, drops the test table if it exists, and creates it for E2E tests.
 func e2eSetupTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+
 	db, err := sql.Open("mysql", e2eTestDBDSN)
 	if err != nil {
 		t.Fatalf("Failed to connect to database: %v", err)
@@ -85,6 +87,8 @@ email VARCHAR(255)
 
 // e2eSetupDataTypesTestDB creates a table specifically for data type conversion testing.
 func e2eSetupDataTypesTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+
 	db, err := sql.Open("mysql", e2eTestDBDSN)
 	if err != nil {
 		t.Fatalf("Failed to connect to database: %v", err)
@@ -122,6 +126,8 @@ CREATE TABLE data_types_test (
 
 // e2eTearDownTestDB drops the test table for E2E tests.
 func e2eTearDownTestDB(t *testing.T, db *sql.DB) {
+	t.Helper()
+
 	if db == nil {
 		return
 	}
@@ -130,7 +136,7 @@ func e2eTearDownTestDB(t *testing.T, db *sql.DB) {
 		// Log error but don't fail the test, as this is cleanup
 		log.Printf("Failed to drop test table during teardown: %v", err)
 	}
-	db.Close()
+	defer db.Close()
 }
 
 // e2eVerifyDBState queries the database and compares the records with the expected records.
@@ -761,6 +767,8 @@ type OrderItemTestRecord struct {
 
 // e2eSetupMultiTableTestDB creates tables for multi-table E2E tests
 func e2eSetupMultiTableTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+
 	db, err := sql.Open("mysql", e2eTestDBDSN)
 	if err != nil {
 		t.Fatalf("Failed to connect to database: %v", err)
@@ -1176,8 +1184,8 @@ func TestE2EMultiTableSync_DryRun(t *testing.T) {
 			t.Fatalf("Failed to scan new count: %v", err)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("Error during rows iteration: %v", err)
+	if err := rows2.Err(); err != nil {
+		t.Fatalf("Error during rows2 iteration: %v", err)
 	}
 
 	if newCount != 0 {

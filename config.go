@@ -1,12 +1,20 @@
+// Package main provides configuration management for a data synchronization tool.
 package main
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"sort"
 	"strings"
 
 	"github.com/goccy/go-yaml"
+)
+
+// Sync mode constants
+const (
+	SyncModeDiff      = "diff"
+	SyncModeOverwrite = "overwrite"
 )
 
 // DBConfig represents database connection settings
@@ -58,7 +66,7 @@ func NewDefaultConfig() Config {
 			TableName:        "products",
 			Columns:          []string{"id", "name", "price"}, // Match CSV column order
 			PrimaryKey:       "id",
-			SyncMode:         "diff", // "overwrite" or "diff"
+			SyncMode:         SyncModeDiff, // SyncModeOverwrite or SyncModeDiff
 			DeleteNotInFile:  true,
 			TimestampColumns: []string{}, // Default to empty slice
 			ImmutableColumns: []string{}, // Default to empty slice
@@ -138,13 +146,13 @@ func ValidateConfig(cfg Config) error {
 	}
 
 	// Check if using multi-table sync or legacy single table sync
-	if len(cfg.Tables) > 0 || (cfg.Sync.FilePath == "" && cfg.Sync.TableName == "") {
-		// Multi-table sync validation (either has Tables array or empty Sync config)
-		return validateMultiTableConfig(cfg)
-	} else {
+	if len(cfg.Tables) == 0 && (cfg.Sync.FilePath != "" || cfg.Sync.TableName != "") {
 		// Legacy single table sync validation
 		return validateSingleTableConfig(cfg)
 	}
+
+	// Multi-table sync validation (either has Tables array or empty Sync config)
+	return validateMultiTableConfig(cfg)
 }
 
 // validateSingleTableConfig validates legacy single table configuration
@@ -157,10 +165,10 @@ func validateSingleTableConfig(cfg Config) error {
 		return fmt.Errorf("table name is required")
 	}
 	// Note: If Columns are not specified in config, they will be derived from the CSV header.
-	if cfg.Sync.SyncMode != "overwrite" && cfg.Sync.SyncMode != "diff" {
+	if cfg.Sync.SyncMode != SyncModeOverwrite && cfg.Sync.SyncMode != SyncModeDiff {
 		return fmt.Errorf("sync mode must be either 'overwrite' or 'diff'")
 	}
-	if cfg.Sync.SyncMode == "diff" && cfg.Sync.PrimaryKey == "" {
+	if cfg.Sync.SyncMode == SyncModeDiff && cfg.Sync.PrimaryKey == "" {
 		return fmt.Errorf("primary key is required for diff sync mode")
 	}
 	return nil
@@ -192,10 +200,10 @@ func validateTablesBasicFields(tables []TableSyncConfig) error {
 		if table.FilePath == "" {
 			return fmt.Errorf("table[%d] (%s): file path is required", i, table.Name)
 		}
-		if table.SyncMode != "overwrite" && table.SyncMode != "diff" {
+		if table.SyncMode != SyncModeOverwrite && table.SyncMode != SyncModeDiff {
 			return fmt.Errorf("table[%d] (%s): sync mode must be either 'overwrite' or 'diff'", i, table.Name)
 		}
-		if table.SyncMode == "diff" && table.PrimaryKey == "" {
+		if table.SyncMode == SyncModeDiff && table.PrimaryKey == "" {
 			return fmt.Errorf("table[%d] (%s): primary key is required for diff sync mode", i, table.Name)
 		}
 
@@ -226,7 +234,7 @@ func (e *DependencyError) Error() string {
 func (e *DependencyError) GetDetailedErrorMessage() string {
 	var msg strings.Builder
 
-	msg.WriteString(fmt.Sprintf("❌ Configuration Error: Dependency Missing\n"))
+	msg.WriteString("❌ Configuration Error: Dependency Missing\n")
 	msg.WriteString(fmt.Sprintf("Table: %s (index: %d)\n", e.TableName, e.TableIndex))
 	msg.WriteString(fmt.Sprintf("Missing dependency: '%s'\n\n", e.MissingDependency))
 
@@ -390,9 +398,7 @@ func NewDependencyGraph(tables []TableSyncConfig) *DependencyGraph {
 func (g *DependencyGraph) DetectCycles(tables []TableSyncConfig) error {
 	// Create a copy of inDegree to avoid modifying the original
 	inDegreeCopy := make(map[string]int)
-	for k, v := range g.inDegree {
-		inDegreeCopy[k] = v
-	}
+	maps.Copy(inDegreeCopy, g.inDegree)
 
 	// Kahn's algorithm for cycle detection
 	queue := []string{}
@@ -512,9 +518,7 @@ func validateNoCycles(tables []TableSyncConfig) error {
 func (g *DependencyGraph) GetTopologicalOrder() ([]string, error) {
 	// Create a copy of inDegree to avoid modifying the original
 	inDegreeCopy := make(map[string]int)
-	for k, v := range g.inDegree {
-		inDegreeCopy[k] = v
-	}
+	maps.Copy(inDegreeCopy, g.inDegree)
 
 	// Kahn's algorithm for topological sorting
 	queue := []string{}

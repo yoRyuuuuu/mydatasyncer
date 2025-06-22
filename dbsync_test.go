@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -56,7 +55,10 @@ func setupTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
 
-	db.Close()
+	if err := db.Close(); err != nil {
+		t.Fatalf("Failed to close root database: %v", err)
+	}
+
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", user, password, host, port, dbname)
 	db, err = sql.Open("mysql", dsn)
 	if err != nil {
@@ -95,7 +97,7 @@ func createTestConfig() Config {
 			PrimaryKey:       "id",
 			Columns:          []string{"id", "name", "value"},
 			TimestampColumns: []string{"created_at", "updated_at"},
-			SyncMode:         "diff",
+			SyncMode:         SyncModeDiff,
 			DeleteNotInFile:  true,
 		},
 	}
@@ -106,7 +108,7 @@ func TestSyncOverwrite(t *testing.T) {
 	defer db.Close()
 
 	config := createTestConfig()
-	config.Sync.SyncMode = "overwrite"
+	config.Sync.SyncMode = SyncModeOverwrite
 
 	t.Run("sync to empty database", func(t *testing.T) {
 		cleanupTestData(t, db)
@@ -116,7 +118,7 @@ func TestSyncOverwrite(t *testing.T) {
 			{"id": "2", "name": "test2", "value": "value2"},
 		}
 
-		err := syncData(context.Background(), db, config, fileRecords)
+		err := syncData(t.Context(), db, config, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -157,7 +159,7 @@ func TestSyncOverwrite(t *testing.T) {
 			{"id": "2", "name": "new2", "value": "new_value2"},
 		}
 
-		err = syncData(context.Background(), db, config, fileRecords)
+		err = syncData(t.Context(), db, config, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -189,7 +191,7 @@ func TestSyncOverwrite(t *testing.T) {
 		cleanupTestData(t, db)
 		localConfig := createTestConfig()
 		localConfig.Sync.Columns = []string{} // Empty
-		localConfig.Sync.SyncMode = "overwrite"
+		localConfig.Sync.SyncMode = SyncModeOverwrite
 
 		// Insert some initial data that should be wiped
 		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)",
@@ -204,7 +206,7 @@ func TestSyncOverwrite(t *testing.T) {
 			{"id": "2", "name": "file_name2", "value": "file_value2", "extra_csv_col": "ignore_this_too"},
 		}
 
-		err = syncData(context.Background(), db, localConfig, fileRecords)
+		err = syncData(t.Context(), db, localConfig, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -242,7 +244,7 @@ func TestSyncOverwrite(t *testing.T) {
 		cleanupTestData(t, db)
 		localConfig := createTestConfig()
 		localConfig.Sync.Columns = []string{"id", "name"} // Only sync id and name
-		localConfig.Sync.SyncMode = "overwrite"
+		localConfig.Sync.SyncMode = SyncModeOverwrite
 
 		// Insert some initial data that should be wiped
 		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)",
@@ -257,7 +259,7 @@ func TestSyncOverwrite(t *testing.T) {
 			{"id": "2", "name": "file_name2", "value": "file_value2_ignored"},
 		}
 
-		err = syncData(context.Background(), db, localConfig, fileRecords)
+		err = syncData(t.Context(), db, localConfig, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -305,7 +307,7 @@ func TestSyncDiff(t *testing.T) {
 	defer db.Close()
 
 	config := createTestConfig()
-	config.Sync.SyncMode = "diff"
+	config.Sync.SyncMode = SyncModeDiff
 
 	t.Run("diff sync to empty database", func(t *testing.T) {
 		cleanupTestData(t, db)
@@ -315,7 +317,7 @@ func TestSyncDiff(t *testing.T) {
 			{"id": "2", "name": "test2", "value": "value2"},
 		}
 
-		err := syncData(context.Background(), db, config, fileRecords)
+		err := syncData(t.Context(), db, config, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -360,7 +362,7 @@ func TestSyncDiff(t *testing.T) {
 			{"id": "4", "name": "test4", "value": "value4"},
 		}
 
-		err = syncData(context.Background(), db, config, fileRecords)
+		err = syncData(t.Context(), db, config, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -401,14 +403,14 @@ func TestSyncDiff(t *testing.T) {
 		}
 
 		localConfig := createTestConfig() // Use a local config for this subtest
-		localConfig.Sync.SyncMode = "diff"
+		localConfig.Sync.SyncMode = SyncModeDiff
 		localConfig.Sync.ImmutableColumns = []string{"name"}
 
 		fileRecords := []DataRecord{
 			{"id": "1", "name": "new_name", "value": "new_value"},
 		}
 
-		err = syncData(context.Background(), db, localConfig, fileRecords)
+		err = syncData(t.Context(), db, localConfig, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -431,7 +433,7 @@ func TestSyncDiff(t *testing.T) {
 		cleanupTestData(t, db)
 		localConfig := createTestConfig()
 		localConfig.Sync.Columns = []string{} // Empty, so CSV header and DB cols determine sync
-		localConfig.Sync.SyncMode = "diff"
+		localConfig.Sync.SyncMode = SyncModeDiff
 
 		// DB has id, name, value
 		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)",
@@ -445,7 +447,7 @@ func TestSyncDiff(t *testing.T) {
 			{"id": "2", "name": "file_name2", "value": "file_value2", "extra_csv_col": "ignore_this_too"},
 		}
 
-		err = syncData(context.Background(), db, localConfig, fileRecords)
+		err = syncData(t.Context(), db, localConfig, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -482,7 +484,7 @@ func TestSyncDiff(t *testing.T) {
 		cleanupTestData(t, db)
 		localConfig := createTestConfig()
 		localConfig.Sync.Columns = []string{"id", "name"}
-		localConfig.Sync.SyncMode = "diff"
+		localConfig.Sync.SyncMode = SyncModeDiff
 
 		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)",
 			"1", "db_name1", "db_value1")
@@ -495,7 +497,7 @@ func TestSyncDiff(t *testing.T) {
 			{"id": "2", "name": "file_name2", "value": "file_value2"},
 		}
 
-		err = syncData(context.Background(), db, localConfig, fileRecords)
+		err = syncData(t.Context(), db, localConfig, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -610,7 +612,7 @@ func TestSyncDataEmptyFile(t *testing.T) {
 	t.Run("diff mode without deleteNotInFile with empty file", func(t *testing.T) {
 		cleanupTestData(t, db)
 		config := createTestConfig()
-		config.Sync.SyncMode = "diff"
+		config.Sync.SyncMode = SyncModeDiff
 		config.Sync.DeleteNotInFile = false
 
 		// Insert some initial data
@@ -622,7 +624,7 @@ func TestSyncDataEmptyFile(t *testing.T) {
 		// Empty file records
 		fileRecords := []DataRecord{}
 
-		err = syncData(context.Background(), db, config, fileRecords)
+		err = syncData(t.Context(), db, config, fileRecords)
 		if err != nil {
 			t.Fatalf("syncData failed: %v", err)
 		}
@@ -640,6 +642,9 @@ func TestSyncDataEmptyFile(t *testing.T) {
 				t.Fatalf("Failed to scan count: %v", err)
 			}
 		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("Error during row iteration: %v", err)
+		}
 
 		if count != 1 {
 			t.Errorf("Expected 1 record to remain, got %d", count)
@@ -649,7 +654,7 @@ func TestSyncDataEmptyFile(t *testing.T) {
 	t.Run("diff mode with deleteNotInFile and empty file", func(t *testing.T) {
 		cleanupTestData(t, db)
 		config := createTestConfig()
-		config.Sync.SyncMode = "diff"
+		config.Sync.SyncMode = SyncModeDiff
 		config.Sync.DeleteNotInFile = true
 
 		// Insert some initial data
@@ -661,7 +666,7 @@ func TestSyncDataEmptyFile(t *testing.T) {
 		// Empty file records
 		fileRecords := []DataRecord{}
 
-		err = syncData(context.Background(), db, config, fileRecords)
+		err = syncData(t.Context(), db, config, fileRecords)
 		if err != nil {
 			t.Fatalf("syncData failed: %v", err)
 		}
@@ -679,6 +684,9 @@ func TestSyncDataEmptyFile(t *testing.T) {
 				t.Fatalf("Failed to scan count: %v", err)
 			}
 		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("Error during row iteration: %v", err)
+		}
 
 		if count != 0 {
 			t.Errorf("Expected 0 records after delete, got %d", count)
@@ -688,7 +696,7 @@ func TestSyncDataEmptyFile(t *testing.T) {
 	t.Run("overwrite mode with empty file", func(t *testing.T) {
 		cleanupTestData(t, db)
 		config := createTestConfig()
-		config.Sync.SyncMode = "overwrite"
+		config.Sync.SyncMode = SyncModeOverwrite
 
 		// Insert some initial data
 		_, err := db.Exec("INSERT INTO test_table (id, name, value) VALUES (?, ?, ?)", "1", "test1", "value1")
@@ -699,7 +707,7 @@ func TestSyncDataEmptyFile(t *testing.T) {
 		// Empty file records
 		fileRecords := []DataRecord{}
 
-		err = syncData(context.Background(), db, config, fileRecords)
+		err = syncData(t.Context(), db, config, fileRecords)
 		if err != nil {
 			t.Fatalf("syncData failed: %v", err)
 		}
@@ -716,6 +724,9 @@ func TestSyncDataEmptyFile(t *testing.T) {
 			if err := rows.Scan(&count); err != nil {
 				t.Fatalf("Failed to scan count: %v", err)
 			}
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("Error during row iteration: %v", err)
 		}
 
 		if count != 0 {
@@ -739,14 +750,14 @@ func TestDryRunOverwriteMode(t *testing.T) {
 
 	config := createTestConfig()
 	config.DryRun = true
-	config.Sync.SyncMode = "overwrite"
+	config.Sync.SyncMode = SyncModeOverwrite
 
 	fileRecords := []DataRecord{
 		{"id": "3", "name": "new3", "value": "new_value3"},
 		{"id": "4", "name": "new4", "value": "new_value4"},
 	}
 
-	err = syncData(context.Background(), db, config, fileRecords)
+	err = syncData(t.Context(), db, config, fileRecords)
 	if err != nil {
 		t.Fatalf("Failed to execute dry run: %v", err)
 	}
@@ -764,6 +775,9 @@ func TestDryRunOverwriteMode(t *testing.T) {
 			t.Fatalf("Failed to scan row: %v", err)
 		}
 		result = append(result, DataRecord{"id": id, "name": name, "value": value})
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Error during row iteration: %v", err)
 	}
 
 	expectedRecords := []DataRecord{
@@ -792,7 +806,7 @@ func TestDryRunDiffMode(t *testing.T) {
 
 	config := createTestConfig()
 	config.DryRun = true
-	config.Sync.SyncMode = "diff"
+	config.Sync.SyncMode = SyncModeDiff
 
 	fileRecords := []DataRecord{
 		{"id": "1", "name": "new1", "value": "new_value1"},
@@ -800,7 +814,7 @@ func TestDryRunDiffMode(t *testing.T) {
 		{"id": "2", "name": "old2", "value": "old_value2"},
 	}
 
-	err = syncData(context.Background(), db, config, fileRecords)
+	err = syncData(t.Context(), db, config, fileRecords)
 	if err != nil {
 		t.Fatalf("Failed to execute dry run: %v", err)
 	}
@@ -819,6 +833,9 @@ func TestDryRunDiffMode(t *testing.T) {
 		}
 		result = append(result, DataRecord{"id": id, "name": name, "value": value})
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Error during row iteration: %v", err)
+	}
 
 	expectedRecords := []DataRecord{
 		{"id": "1", "name": "old1", "value": "old_value1"},
@@ -833,7 +850,7 @@ func TestDryRunDiffMode(t *testing.T) {
 
 func TestExecutionPlanString(t *testing.T) {
 	plan := &ExecutionPlan{
-		SyncMode:        "diff",
+		SyncMode:        SyncModeDiff,
 		TableName:       "test_table",
 		FileRecordCount: 3,
 		DbRecordCount:   3,
@@ -1082,7 +1099,6 @@ func TestConvertValueToString(t *testing.T) {
 			})
 		}
 	})
-
 }
 
 func TestDetermineActualSyncColumns(t *testing.T) {
@@ -1260,7 +1276,7 @@ func TestDetermineActualSyncColumns(t *testing.T) {
 func TestValidateDiffSyncRequirements(t *testing.T) {
 	t.Run("valid diff sync config", func(t *testing.T) {
 		config := createTestConfig()
-		config.Sync.SyncMode = "diff"
+		config.Sync.SyncMode = SyncModeDiff
 		config.Sync.PrimaryKey = "id"
 		syncCols := []string{"id", "name", "value"}
 
@@ -1272,7 +1288,7 @@ func TestValidateDiffSyncRequirements(t *testing.T) {
 
 	t.Run("diff sync without primary key", func(t *testing.T) {
 		config := createTestConfig()
-		config.Sync.SyncMode = "diff"
+		config.Sync.SyncMode = SyncModeDiff
 		config.Sync.PrimaryKey = ""
 		syncCols := []string{"name", "value"}
 
@@ -1287,7 +1303,7 @@ func TestValidateDiffSyncRequirements(t *testing.T) {
 
 	t.Run("primary key not in sync columns", func(t *testing.T) {
 		config := createTestConfig()
-		config.Sync.SyncMode = "diff"
+		config.Sync.SyncMode = SyncModeDiff
 		config.Sync.PrimaryKey = "id"
 		syncCols := []string{"name", "value"} // id not included
 
@@ -1347,7 +1363,7 @@ func TestGetTableColumns(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		columns, err := getTableColumns(context.Background(), tx, "test_table")
+		columns, err := getTableColumns(t.Context(), tx, "test_table")
 		if err != nil {
 			t.Fatalf("Failed to get table columns: %v", err)
 		}
@@ -1368,7 +1384,7 @@ func TestGetTableColumns(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		_, err = getTableColumns(context.Background(), tx, "non_existent_table")
+		_, err = getTableColumns(t.Context(), tx, "non_existent_table")
 		if err == nil {
 			t.Error("Expected error for non-existent table")
 		}
