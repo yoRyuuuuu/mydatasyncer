@@ -767,7 +767,16 @@ func e2eSetupMultiTableTestDB(t *testing.T) *sql.DB {
 	}
 
 	// Drop tables in reverse dependency order (child → parent)
-	tablesToDrop := []string{"order_items", "orders", "products", "categories"}
+	// Based on foreign key dependencies in create_business_tables.sql:
+	tablesToDrop := []string{
+		"inventory_logs",  // References: orders, products, warehouses
+		"order_items",     // References: orders, products, warehouses
+		"orders",          // References: customers
+		"products",        // References: categories
+		"customers",       // Independent
+		"warehouses",      // Independent
+		"categories",      // Independent
+	}
 	for _, tableName := range tablesToDrop {
 		_, err = db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName))
 		if err != nil {
@@ -837,7 +846,21 @@ func e2eTearDownMultiTableTestDB(_ *testing.T, db *sql.DB) {
 	}
 
 	// Drop tables in reverse dependency order (child → parent)
-	tablesToDrop := []string{"order_items", "orders", "products", "categories"}
+	// Based on foreign key dependencies in create_business_tables.sql:
+	// inventory_logs → products, warehouses, orders
+	// order_items → orders, products, warehouses  
+	// orders → customers
+	// products → categories
+	tablesToDrop := []string{
+		"inventory_logs",  // References: orders, products, warehouses
+		"order_items",     // References: orders, products, warehouses
+		"orders",          // References: customers
+		"products",        // References: categories
+		"customers",       // Independent
+		"warehouses",      // Independent
+		"categories",      // Independent
+	}
+	
 	for _, tableName := range tablesToDrop {
 		_, err := db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName))
 		if err != nil {
@@ -863,6 +886,9 @@ func e2eVerifyCategoriesDBState(t *testing.T, db *sql.DB, expectedRecords []Cate
 			t.Fatalf("Failed to scan category row: %v", err)
 		}
 		actualRecords = append(actualRecords, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Error during rows iteration: %v", err)
 	}
 
 	if len(actualRecords) != len(expectedRecords) {
@@ -950,6 +976,9 @@ func e2eVerifyOrderItemsDBState(t *testing.T, db *sql.DB, expectedRecords []Orde
 			t.Fatalf("Failed to scan order_item row: %v", err)
 		}
 		actualRecords = append(actualRecords, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Error during rows iteration: %v", err)
 	}
 
 	if len(actualRecords) != len(expectedRecords) {
