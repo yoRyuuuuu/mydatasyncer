@@ -138,13 +138,13 @@ func ValidateConfig(cfg Config) error {
 	}
 
 	// Check if using multi-table sync or legacy single table sync
-	if len(cfg.Tables) > 0 || (cfg.Sync.FilePath == "" && cfg.Sync.TableName == "") {
-		// Multi-table sync validation (either has Tables array or empty Sync config)
-		return validateMultiTableConfig(cfg)
-	} else {
+	if len(cfg.Tables) <= 0 && !(cfg.Sync.FilePath == "" && cfg.Sync.TableName == "") {
 		// Legacy single table sync validation
 		return validateSingleTableConfig(cfg)
 	}
+
+	// Multi-table sync validation (either has Tables array or empty Sync config)
+	return validateMultiTableConfig(cfg)
 }
 
 // validateSingleTableConfig validates legacy single table configuration
@@ -226,7 +226,7 @@ func (e *DependencyError) Error() string {
 func (e *DependencyError) GetDetailedErrorMessage() string {
 	var msg strings.Builder
 
-	msg.WriteString(fmt.Sprintf("❌ Configuration Error: Dependency Missing\n"))
+	msg.WriteString("❌ Configuration Error: Dependency Missing\n")
 	msg.WriteString(fmt.Sprintf("Table: %s (index: %d)\n", e.TableName, e.TableIndex))
 	msg.WriteString(fmt.Sprintf("Missing dependency: '%s'\n\n", e.MissingDependency))
 

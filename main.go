@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -67,12 +68,14 @@ func RunApp(configPath string, dryRun bool) error {
 
 	if err := ValidateConfig(config); err != nil {
 		// Check if it's a DependencyError for enhanced error reporting
-		if depErr, ok := err.(*DependencyError); ok {
+		var depErr *DependencyError
+		if errors.As(err, &depErr) {
 			log.Printf("%s", depErr.GetDetailedErrorMessage())
 			return fmt.Errorf("configuration validation failed")
 		}
 		// Check if it's a CircularDependencyError for enhanced error reporting
-		if circErr, ok := err.(*CircularDependencyError); ok {
+		var circErr *CircularDependencyError
+		if errors.As(err, &circErr) {
 			log.Printf("%s", circErr.GetDetailedErrorMessage())
 			return fmt.Errorf("configuration validation failed")
 		}

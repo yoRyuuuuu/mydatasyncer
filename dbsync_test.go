@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -56,7 +55,10 @@ func setupTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
 
-	db.Close()
+	if err := db.Close(); err != nil {
+		t.Fatalf("Failed to close root database: %v", err)
+	}
+
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", user, password, host, port, dbname)
 	db, err = sql.Open("mysql", dsn)
 	if err != nil {
@@ -116,7 +118,7 @@ func TestSyncOverwrite(t *testing.T) {
 			{"id": "2", "name": "test2", "value": "value2"},
 		}
 
-		err := syncData(context.Background(), db, config, fileRecords)
+		err := syncData(t.Context(), db, config, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -157,7 +159,7 @@ func TestSyncOverwrite(t *testing.T) {
 			{"id": "2", "name": "new2", "value": "new_value2"},
 		}
 
-		err = syncData(context.Background(), db, config, fileRecords)
+		err = syncData(t.Context(), db, config, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -204,7 +206,7 @@ func TestSyncOverwrite(t *testing.T) {
 			{"id": "2", "name": "file_name2", "value": "file_value2", "extra_csv_col": "ignore_this_too"},
 		}
 
-		err = syncData(context.Background(), db, localConfig, fileRecords)
+		err = syncData(t.Context(), db, localConfig, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -257,7 +259,7 @@ func TestSyncOverwrite(t *testing.T) {
 			{"id": "2", "name": "file_name2", "value": "file_value2_ignored"},
 		}
 
-		err = syncData(context.Background(), db, localConfig, fileRecords)
+		err = syncData(t.Context(), db, localConfig, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -315,7 +317,7 @@ func TestSyncDiff(t *testing.T) {
 			{"id": "2", "name": "test2", "value": "value2"},
 		}
 
-		err := syncData(context.Background(), db, config, fileRecords)
+		err := syncData(t.Context(), db, config, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -360,7 +362,7 @@ func TestSyncDiff(t *testing.T) {
 			{"id": "4", "name": "test4", "value": "value4"},
 		}
 
-		err = syncData(context.Background(), db, config, fileRecords)
+		err = syncData(t.Context(), db, config, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -408,7 +410,7 @@ func TestSyncDiff(t *testing.T) {
 			{"id": "1", "name": "new_name", "value": "new_value"},
 		}
 
-		err = syncData(context.Background(), db, localConfig, fileRecords)
+		err = syncData(t.Context(), db, localConfig, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -445,7 +447,7 @@ func TestSyncDiff(t *testing.T) {
 			{"id": "2", "name": "file_name2", "value": "file_value2", "extra_csv_col": "ignore_this_too"},
 		}
 
-		err = syncData(context.Background(), db, localConfig, fileRecords)
+		err = syncData(t.Context(), db, localConfig, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -495,7 +497,7 @@ func TestSyncDiff(t *testing.T) {
 			{"id": "2", "name": "file_name2", "value": "file_value2"},
 		}
 
-		err = syncData(context.Background(), db, localConfig, fileRecords)
+		err = syncData(t.Context(), db, localConfig, fileRecords)
 		if err != nil {
 			t.Fatalf("Failed to sync data: %v", err)
 		}
@@ -622,7 +624,7 @@ func TestSyncDataEmptyFile(t *testing.T) {
 		// Empty file records
 		fileRecords := []DataRecord{}
 
-		err = syncData(context.Background(), db, config, fileRecords)
+		err = syncData(t.Context(), db, config, fileRecords)
 		if err != nil {
 			t.Fatalf("syncData failed: %v", err)
 		}
@@ -639,6 +641,9 @@ func TestSyncDataEmptyFile(t *testing.T) {
 			if err := rows.Scan(&count); err != nil {
 				t.Fatalf("Failed to scan count: %v", err)
 			}
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("Error during row iteration: %v", err)
 		}
 
 		if count != 1 {
@@ -661,7 +666,7 @@ func TestSyncDataEmptyFile(t *testing.T) {
 		// Empty file records
 		fileRecords := []DataRecord{}
 
-		err = syncData(context.Background(), db, config, fileRecords)
+		err = syncData(t.Context(), db, config, fileRecords)
 		if err != nil {
 			t.Fatalf("syncData failed: %v", err)
 		}
@@ -678,6 +683,9 @@ func TestSyncDataEmptyFile(t *testing.T) {
 			if err := rows.Scan(&count); err != nil {
 				t.Fatalf("Failed to scan count: %v", err)
 			}
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("Error during row iteration: %v", err)
 		}
 
 		if count != 0 {
@@ -699,7 +707,7 @@ func TestSyncDataEmptyFile(t *testing.T) {
 		// Empty file records
 		fileRecords := []DataRecord{}
 
-		err = syncData(context.Background(), db, config, fileRecords)
+		err = syncData(t.Context(), db, config, fileRecords)
 		if err != nil {
 			t.Fatalf("syncData failed: %v", err)
 		}
@@ -716,6 +724,9 @@ func TestSyncDataEmptyFile(t *testing.T) {
 			if err := rows.Scan(&count); err != nil {
 				t.Fatalf("Failed to scan count: %v", err)
 			}
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("Error during row iteration: %v", err)
 		}
 
 		if count != 0 {
@@ -746,7 +757,7 @@ func TestDryRunOverwriteMode(t *testing.T) {
 		{"id": "4", "name": "new4", "value": "new_value4"},
 	}
 
-	err = syncData(context.Background(), db, config, fileRecords)
+	err = syncData(t.Context(), db, config, fileRecords)
 	if err != nil {
 		t.Fatalf("Failed to execute dry run: %v", err)
 	}
@@ -764,6 +775,9 @@ func TestDryRunOverwriteMode(t *testing.T) {
 			t.Fatalf("Failed to scan row: %v", err)
 		}
 		result = append(result, DataRecord{"id": id, "name": name, "value": value})
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Error during row iteration: %v", err)
 	}
 
 	expectedRecords := []DataRecord{
@@ -800,7 +814,7 @@ func TestDryRunDiffMode(t *testing.T) {
 		{"id": "2", "name": "old2", "value": "old_value2"},
 	}
 
-	err = syncData(context.Background(), db, config, fileRecords)
+	err = syncData(t.Context(), db, config, fileRecords)
 	if err != nil {
 		t.Fatalf("Failed to execute dry run: %v", err)
 	}
@@ -818,6 +832,9 @@ func TestDryRunDiffMode(t *testing.T) {
 			t.Fatalf("Failed to scan row: %v", err)
 		}
 		result = append(result, DataRecord{"id": id, "name": name, "value": value})
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Error during row iteration: %v", err)
 	}
 
 	expectedRecords := []DataRecord{
@@ -1082,7 +1099,6 @@ func TestConvertValueToString(t *testing.T) {
 			})
 		}
 	})
-
 }
 
 func TestDetermineActualSyncColumns(t *testing.T) {
@@ -1347,7 +1363,7 @@ func TestGetTableColumns(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		columns, err := getTableColumns(context.Background(), tx, "test_table")
+		columns, err := getTableColumns(t.Context(), tx, "test_table")
 		if err != nil {
 			t.Fatalf("Failed to get table columns: %v", err)
 		}
@@ -1368,7 +1384,7 @@ func TestGetTableColumns(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		_, err = getTableColumns(context.Background(), tx, "non_existent_table")
+		_, err = getTableColumns(t.Context(), tx, "non_existent_table")
 		if err == nil {
 			t.Error("Expected error for non-existent table")
 		}

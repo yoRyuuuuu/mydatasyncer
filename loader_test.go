@@ -55,14 +55,14 @@ func TestCSVLoader_Load_Success(t *testing.T) {
 			name:           "header only",
 			csvContent:     `id,name,value`,
 			delimiter:      ',',
-			expected:       nil, // Expect nil slice for no data records
+			expected:       []DataRecord{}, // Expect nil slice for no data records
 			expectedHeader: []string{"id", "name", "value"},
 		},
 		{
 			name:           "empty data with header line ending",
 			csvContent:     "id,name,value\n",
 			delimiter:      ',',
-			expected:       nil, // Expect nil slice for no data records
+			expected:       []DataRecord{}, // Expect nil slice for no data records
 			expectedHeader: []string{"id", "name", "value"},
 		},
 	}

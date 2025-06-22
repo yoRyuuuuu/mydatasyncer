@@ -117,7 +117,7 @@ func (l *CSVLoader) Load(columns []string) ([]DataRecord, error) {
 		}
 	}
 
-	var records []DataRecord
+	records := make([]DataRecord, 0, len(csvRows))
 	for i, row := range csvRows {
 		// Line number reported to user should be i+2 because 1 for header, 1 for 0-indexed loop
 		if len(row) != len(headerNames) {
@@ -186,7 +186,7 @@ func (l *JSONLoader) Load(columns []string) ([]DataRecord, error) {
 		actualColumns = columns
 	}
 
-	var records []DataRecord
+	records := make([]DataRecord, 0, len(jsonData))
 	for i, jsonObj := range jsonData {
 		record := make(DataRecord)
 		for _, colName := range actualColumns {
