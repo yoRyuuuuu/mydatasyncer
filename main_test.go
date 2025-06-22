@@ -769,13 +769,13 @@ func e2eSetupMultiTableTestDB(t *testing.T) *sql.DB {
 	// Drop tables in reverse dependency order (child → parent)
 	// Based on foreign key dependencies in create_business_tables.sql:
 	tablesToDrop := []string{
-		"inventory_logs",  // References: orders, products, warehouses
-		"order_items",     // References: orders, products, warehouses
-		"orders",          // References: customers
-		"products",        // References: categories
-		"customers",       // Independent
-		"warehouses",      // Independent
-		"categories",      // Independent
+		"inventory_logs", // References: orders, products, warehouses
+		"order_items",    // References: orders, products, warehouses
+		"orders",         // References: customers
+		"products",       // References: categories
+		"customers",      // Independent
+		"warehouses",     // Independent
+		"categories",     // Independent
 	}
 	for _, tableName := range tablesToDrop {
 		_, err = db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName))
@@ -848,19 +848,19 @@ func e2eTearDownMultiTableTestDB(_ *testing.T, db *sql.DB) {
 	// Drop tables in reverse dependency order (child → parent)
 	// Based on foreign key dependencies in create_business_tables.sql:
 	// inventory_logs → products, warehouses, orders
-	// order_items → orders, products, warehouses  
+	// order_items → orders, products, warehouses
 	// orders → customers
 	// products → categories
 	tablesToDrop := []string{
-		"inventory_logs",  // References: orders, products, warehouses
-		"order_items",     // References: orders, products, warehouses
-		"orders",          // References: customers
-		"products",        // References: categories
-		"customers",       // Independent
-		"warehouses",      // Independent
-		"categories",      // Independent
+		"inventory_logs", // References: orders, products, warehouses
+		"order_items",    // References: orders, products, warehouses
+		"orders",         // References: customers
+		"products",       // References: categories
+		"customers",      // Independent
+		"warehouses",     // Independent
+		"categories",     // Independent
 	}
-	
+
 	for _, tableName := range tablesToDrop {
 		_, err := db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName))
 		if err != nil {
@@ -919,6 +919,9 @@ func e2eVerifyProductsDBState(t *testing.T, db *sql.DB, expectedRecords []Produc
 		}
 		actualRecords = append(actualRecords, r)
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Error during rows iteration: %v", err)
+	}
 
 	if len(actualRecords) != len(expectedRecords) {
 		t.Fatalf("Products: Expected %d records, but got %d. Actual: %+v", len(expectedRecords), len(actualRecords), actualRecords)
@@ -947,6 +950,9 @@ func e2eVerifyOrdersDBState(t *testing.T, db *sql.DB, expectedRecords []OrderTes
 			t.Fatalf("Failed to scan order row: %v", err)
 		}
 		actualRecords = append(actualRecords, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Error during rows iteration: %v", err)
 	}
 
 	if len(actualRecords) != len(expectedRecords) {
@@ -1148,6 +1154,9 @@ func TestE2EMultiTableSync_DryRun(t *testing.T) {
 			t.Fatalf("Failed to scan count: %v", err)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Error during rows iteration: %v", err)
+	}
 
 	if count != 1 {
 		t.Errorf("Expected existing data to remain unchanged in dry-run mode, but category was modified")
@@ -1166,6 +1175,9 @@ func TestE2EMultiTableSync_DryRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to scan new count: %v", err)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Error during rows iteration: %v", err)
 	}
 
 	if newCount != 0 {
