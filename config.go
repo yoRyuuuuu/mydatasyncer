@@ -209,19 +209,60 @@ func validateTablesBasicFields(tables []TableSyncConfig) error {
 	return nil
 }
 
+// DependencyError represents an error with missing dependency information
+type DependencyError struct {
+	TableName         string
+	TableIndex        int
+	MissingDependency string
+	AvailableTables   []string
+}
+
+func (e *DependencyError) Error() string {
+	return fmt.Sprintf("❌ Configuration Error: Dependency Missing\nTable: %s (index: %d)\nMissing dependency: '%s'",
+		e.TableName, e.TableIndex, e.MissingDependency)
+}
+
+// GetDetailedErrorMessage returns a comprehensive error message with solutions
+func (e *DependencyError) GetDetailedErrorMessage() string {
+	var msg strings.Builder
+
+	msg.WriteString(fmt.Sprintf("❌ Configuration Error: Dependency Missing\n"))
+	msg.WriteString(fmt.Sprintf("Table: %s (index: %d)\n", e.TableName, e.TableIndex))
+	msg.WriteString(fmt.Sprintf("Missing dependency: '%s'\n\n", e.MissingDependency))
+
+	msg.WriteString("💡 Solutions:\n")
+	msg.WriteString(fmt.Sprintf("1. Add '%s' table to your configuration\n", e.MissingDependency))
+	msg.WriteString(fmt.Sprintf("2. Remove '%s' from %s.dependencies\n", e.MissingDependency, e.TableName))
+	msg.WriteString("3. Check for typos in table names\n\n")
+
+	if len(e.AvailableTables) > 0 {
+		sort.Strings(e.AvailableTables)
+		msg.WriteString(fmt.Sprintf("Available tables: %s\n", strings.Join(e.AvailableTables, ", ")))
+	}
+
+	return msg.String()
+}
+
 // validateTableDependencies validates that all dependencies exist in the configuration
 func validateTableDependencies(tables []TableSyncConfig) error {
 	// Create a map of table names for efficient lookup
 	tableNames := make(map[string]bool)
+	availableTables := make([]string, 0, len(tables))
 	for _, table := range tables {
 		tableNames[table.Name] = true
+		availableTables = append(availableTables, table.Name)
 	}
 
 	// Validate dependencies
 	for i, table := range tables {
 		for _, dep := range table.Dependencies {
 			if !tableNames[dep] {
-				return fmt.Errorf("table[%d] (%s): dependency '%s' not found in configuration", i, table.Name, dep)
+				return &DependencyError{
+					TableName:         table.Name,
+					TableIndex:        i,
+					MissingDependency: dep,
+					AvailableTables:   availableTables,
+				}
 			}
 		}
 	}
@@ -231,7 +272,9 @@ func validateTableDependencies(tables []TableSyncConfig) error {
 
 // CircularDependencyError represents an error with circular dependency information
 type CircularDependencyError struct {
-	Cycle []string
+	Cycle        []string
+	AllTables    []TableSyncConfig
+	CycleDetails map[string][]string // Table -> its dependencies
 }
 
 func (e *CircularDependencyError) Error() string {
@@ -239,6 +282,66 @@ func (e *CircularDependencyError) Error() string {
 		return "circular dependency detected"
 	}
 	return fmt.Sprintf("circular dependency detected: %s", formatCycle(e.Cycle))
+}
+
+// GetDetailedErrorMessage returns a comprehensive error message with solutions
+func (e *CircularDependencyError) GetDetailedErrorMessage() string {
+	var msg strings.Builder
+
+	msg.WriteString("🔄 Circular Dependency Detected\n\n")
+
+	if len(e.Cycle) > 0 {
+		msg.WriteString("Dependency cycle found:\n")
+		msg.WriteString(fmt.Sprintf("%s\n\n", formatCycle(e.Cycle)))
+	}
+
+	// Show detailed dependencies for tables in the cycle
+	msg.WriteString("📋 Tables involved:\n")
+	for _, tableName := range e.Cycle {
+		deps := e.getCycleDependencies(tableName)
+		if len(deps) > 0 {
+			msg.WriteString(fmt.Sprintf("• %s depends on: %s\n", tableName, strings.Join(deps, ", ")))
+		}
+	}
+	msg.WriteString("\n")
+
+	// Provide specific solutions
+	msg.WriteString("💡 How to fix:\n")
+	msg.WriteString("1. Review your foreign key relationships\n")
+	msg.WriteString("2. Consider if the dependency is actually needed\n")
+	msg.WriteString("3. Break the cycle by removing one dependency\n\n")
+
+	if len(e.Cycle) > 0 {
+		msg.WriteString("Example fixes:\n")
+		for i, tableName := range e.Cycle {
+			deps := e.getCycleDependencies(tableName)
+			if len(deps) > 0 {
+				nextTable := e.Cycle[(i+1)%len(e.Cycle)]
+				for _, dep := range deps {
+					if dep == nextTable {
+						msg.WriteString(fmt.Sprintf("Remove %s from %s.dependencies, or\n", dep, tableName))
+					}
+				}
+			}
+		}
+	}
+
+	return msg.String()
+}
+
+// getCycleDependencies returns the dependencies for a table in the cycle
+func (e *CircularDependencyError) getCycleDependencies(tableName string) []string {
+	if e.CycleDetails != nil {
+		return e.CycleDetails[tableName]
+	}
+
+	// Fallback: find dependencies from AllTables
+	for _, table := range e.AllTables {
+		if table.Name == tableName {
+			return table.Dependencies
+		}
+	}
+	return []string{}
 }
 
 // formatCycle formats a dependency cycle for display
@@ -284,7 +387,7 @@ func NewDependencyGraph(tables []TableSyncConfig) *DependencyGraph {
 }
 
 // DetectCycles detects circular dependencies and returns detailed error information
-func (g *DependencyGraph) DetectCycles() error {
+func (g *DependencyGraph) DetectCycles(tables []TableSyncConfig) error {
 	// Create a copy of inDegree to avoid modifying the original
 	inDegreeCopy := make(map[string]int)
 	for k, v := range g.inDegree {
@@ -324,7 +427,23 @@ func (g *DependencyGraph) DetectCycles() error {
 
 		// Try to find a specific cycle path
 		cycle := g.findCyclePath(cycleNodes)
-		return &CircularDependencyError{Cycle: cycle}
+
+		// Build cycle details map
+		cycleDetails := make(map[string][]string)
+		for _, table := range tables {
+			for _, cycleName := range cycle {
+				if table.Name == cycleName {
+					cycleDetails[cycleName] = table.Dependencies
+					break
+				}
+			}
+		}
+
+		return &CircularDependencyError{
+			Cycle:        cycle,
+			AllTables:    tables,
+			CycleDetails: cycleDetails,
+		}
 	}
 
 	return nil
@@ -386,7 +505,7 @@ func (g *DependencyGraph) dfsForCycle(node string, visited, recStack map[string]
 // validateNoCycles performs topological sort to detect circular dependencies
 func validateNoCycles(tables []TableSyncConfig) error {
 	graph := NewDependencyGraph(tables)
-	return graph.DetectCycles()
+	return graph.DetectCycles(tables)
 }
 
 // GetTopologicalOrder returns the topological ordering of tables based on dependencies
@@ -428,10 +547,6 @@ func (g *DependencyGraph) GetTopologicalOrder() ([]string, error) {
 
 	// Check if all tables were processed (no cycles)
 	if len(sortedOrder) != len(g.inDegree) {
-		// Find the cycle for better error reporting
-		if err := g.DetectCycles(); err != nil {
-			return nil, err
-		}
 		return nil, fmt.Errorf("circular dependency detected, cannot determine topological order")
 	}
 
