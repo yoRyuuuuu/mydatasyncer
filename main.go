@@ -71,6 +71,11 @@ func RunApp(configPath string, dryRun bool) error {
 			log.Printf("%s", depErr.GetDetailedErrorMessage())
 			return fmt.Errorf("configuration validation failed")
 		}
+		// Check if it's a CircularDependencyError for enhanced error reporting
+		if circErr, ok := err.(*CircularDependencyError); ok {
+			log.Printf("%s", circErr.GetDetailedErrorMessage())
+			return fmt.Errorf("configuration validation failed")
+		}
 		return fmt.Errorf("configuration error: %w", err)
 	}
 

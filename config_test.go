@@ -717,7 +717,7 @@ func TestCircularDependencyError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			graph := NewDependencyGraph(tt.tables)
-			err := graph.DetectCycles()
+			err := graph.DetectCycles(tt.tables)
 
 			if err == nil {
 				t.Errorf("Expected circular dependency error but got nil")
