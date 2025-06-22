@@ -7,11 +7,11 @@ import (
 	"strings"
 )
 
-// PrimaryKeyValidator validates primary key integrity with strict enforcement by default
+// PrimaryKeyValidator validates primary key integrity with configurable settings
 // This validator ensures data consistency by rejecting any records with NULL, empty, or duplicate primary keys
 type PrimaryKeyValidator struct {
-	// Note: strictMode is always true by default - no configuration option to disable
-	// This ensures maximum data integrity and prevents data corruption
+	MaxKeyLength int  // Maximum allowed length for primary keys (default: 255)
+	StrictMode   bool // Whether to enforce strict validation (default: true)
 }
 
 // PrimaryKeyValidationResult contains the results of primary key validation
@@ -32,9 +32,23 @@ type InvalidPrimaryKeyRecord struct {
 	PrimaryKeyValue string     // The invalid primary key value
 }
 
-// NewPrimaryKeyValidator creates a new validator with strict mode enabled by default
+// NewPrimaryKeyValidator creates a new validator with default settings
 func NewPrimaryKeyValidator() *PrimaryKeyValidator {
-	return &PrimaryKeyValidator{}
+	return &PrimaryKeyValidator{
+		MaxKeyLength: 255,
+		StrictMode:   true,
+	}
+}
+
+// NewPrimaryKeyValidatorWithConfig creates a new validator with custom configuration
+func NewPrimaryKeyValidatorWithConfig(maxKeyLength int, strictMode bool) *PrimaryKeyValidator {
+	if maxKeyLength <= 0 {
+		maxKeyLength = 255 // Default fallback
+	}
+	return &PrimaryKeyValidator{
+		MaxKeyLength: maxKeyLength,
+		StrictMode:   strictMode,
+	}
 }
 
 // ValidateAllRecords performs comprehensive primary key validation with strict enforcement
@@ -108,8 +122,12 @@ func (pkv *PrimaryKeyValidator) ValidateAllRecords(records []DataRecord, primary
 		result.IsValid = false
 		result.ErrorSummary = pkv.generateErrorSummary(result)
 
-		// STRICT MODE: Always return error if any violations found
-		return result, fmt.Errorf("🚨 PRIMARY KEY VALIDATION FAILED: %s", result.ErrorSummary)
+		// Check strict mode enforcement
+		if pkv.StrictMode {
+			return result, fmt.Errorf("🚨 PRIMARY KEY VALIDATION FAILED: %s", result.ErrorSummary)
+		}
+		// In non-strict mode, log warnings but don't fail
+		log.Printf("⚠️ PRIMARY KEY VALIDATION WARNINGS: %s", result.ErrorSummary)
 	}
 
 	log.Printf("✅ Primary key validation passed: %d valid records", result.ValidRecords)
@@ -159,8 +177,8 @@ func (pkv *PrimaryKeyValidator) validatePrimaryKeyFormat(pkValue string) error {
 	}
 
 	// Check for extremely long primary keys (potential data corruption)
-	if len(pkValue) > 255 {
-		return fmt.Errorf("primary key exceeds maximum length (255 characters)")
+	if len(pkValue) > pkv.MaxKeyLength {
+		return fmt.Errorf("primary key exceeds maximum length (%d characters)", pkv.MaxKeyLength)
 	}
 
 	// Check for leading/trailing whitespace (data quality issue)

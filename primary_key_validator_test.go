@@ -123,6 +123,18 @@ func TestPrimaryKeyValidator_ValidateAllRecords(t *testing.T) {
 			expectedReasons:  []string{"primary_key_invalid_format"},
 		},
 		{
+			name: "Custom MaxKeyLength should be respected",
+			records: []DataRecord{
+				{"id": "short", "name": "Alice"},
+				{"id": "toolong", "name": "Bob"}, // 7 chars, exceeds limit of 5
+			},
+			primaryKeyColumn: "id",
+			expectError:      true,
+			expectedValid:    1,
+			expectedInvalid:  1,
+			expectedReasons:  []string{"primary_key_invalid_format"},
+		},
+		{
 			name: "Empty primary key column name should fail",
 			records: []DataRecord{
 				{"id": "1", "name": "Alice"},
@@ -146,7 +158,12 @@ func TestPrimaryKeyValidator_ValidateAllRecords(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := validator.ValidateAllRecords(tt.records, tt.primaryKeyColumn)
+			// Use custom validator for MaxKeyLength test
+			testValidator := validator
+			if tt.name == "Custom MaxKeyLength should be respected" {
+				testValidator = NewPrimaryKeyValidatorWithConfig(5, true)
+			}
+			result, err := testValidator.ValidateAllRecords(tt.records, tt.primaryKeyColumn)
 
 			// Check error expectation
 			if tt.expectError && err == nil {
@@ -372,4 +389,74 @@ func TestPrimaryKeyValidator_Integration(t *testing.T) {
 
 	// Test the reporting (should not panic)
 	validator.ReportValidationFailure(result)
+}
+
+func TestPrimaryKeyValidator_CustomConfiguration(t *testing.T) {
+	tests := []struct {
+		name         string
+		maxKeyLength int
+		strictMode   bool
+		records      []DataRecord
+		expectError  bool
+	}{
+		{
+			name:         "Non-strict mode should not fail on violations",
+			maxKeyLength: 255,
+			strictMode:   false,
+			records: []DataRecord{
+				{"id": "1", "name": "Alice"},
+				{"id": "", "name": "Bob"}, // Empty primary key
+			},
+			expectError: false, // Should not fail in non-strict mode
+		},
+		{
+			name:         "Custom max length should be enforced",
+			maxKeyLength: 3,
+			strictMode:   true,
+			records: []DataRecord{
+				{"id": "123", "name": "Alice"}, // Exactly 3 chars
+				{"id": "1234", "name": "Bob"},  // 4 chars, exceeds limit
+			},
+			expectError: true,
+		},
+		{
+			name:         "Zero max length should default to 255",
+			maxKeyLength: 0,
+			strictMode:   true,
+			records: []DataRecord{
+				{"id": strings.Repeat("a", 256), "name": "Alice"}, // 256 chars, exceeds default 255
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			validator := NewPrimaryKeyValidatorWithConfig(tt.maxKeyLength, tt.strictMode)
+
+			// Verify configuration
+			if tt.maxKeyLength > 0 && validator.MaxKeyLength != tt.maxKeyLength {
+				t.Errorf("Expected MaxKeyLength=%d, got %d", tt.maxKeyLength, validator.MaxKeyLength)
+			}
+			if tt.maxKeyLength <= 0 && validator.MaxKeyLength != 255 {
+				t.Errorf("Expected default MaxKeyLength=255, got %d", validator.MaxKeyLength)
+			}
+			if validator.StrictMode != tt.strictMode {
+				t.Errorf("Expected StrictMode=%v, got %v", tt.strictMode, validator.StrictMode)
+			}
+
+			result, err := validator.ValidateAllRecords(tt.records, "id")
+
+			if tt.expectError && err == nil {
+				t.Errorf("Expected error but got none")
+			}
+			if !tt.expectError && err != nil {
+				t.Errorf("Expected no error but got: %v", err)
+			}
+
+			if result == nil {
+				t.Errorf("Result should not be nil")
+			}
+		})
+	}
 }
